@@ -1,0 +1,80 @@
+{
+  "system": {
+    "name": "Mission Control Nexus",
+    "version": "1.0.0",
+    "description": "Intelligent project management and documentation system"
+  },
+  "ai": {
+    "provider": "openrouter",
+    "models": {
+      "primary": "openrouter/z-ai/glm-4.5-air:free",
+      "reasoning": "openrouter/anthropic/claude-3-opus:free",
+      "documentation": "openrouter/openai/gpt-4o:free"
+    },
+    "temperature": 0.7,
+    "max_tokens": 4000
+  },
+  "ticket_analysis": {
+    "sources": ["github", "jira", "trello", "linear"],
+    "priority_fields": ["title", "description", "labels", "priority", "assignee"],
+    "analysis_depth": "comprehensive",
+    "output_format": "structured"
+  },
+  "prd_generation": {
+    "template": "comprehensive",
+    "include_sections": [
+      "overview",
+      "problem_statement",
+      "user_stories",
+      "requirements",
+      "technical_specs",
+      "success_metrics",
+      "timeline",
+      "resources"
+    ],
+    "auto_generate": true,
+    "review_required": true
+  },
+  "documentation": {
+    "formats": ["markdown", "html"],
+    "storage": "git",
+    "auto_update": true,
+    "version_control": true
+  },
+  "memory": {
+    "retention_days": 365,
+    "storage_format": "json",
+    "backup_frequency": "daily",
+    "context_window": 10000,
+    "importance_threshold": 0.7
+  },
+  "reasoning": {
+    "decision_threshold": 0.8,
+    "context_consideration": "full",
+    "reasoning_depth": "deep",
+    "auto_execute": false,
+    "human_review": true
+  },
+  "templates": {
+    "ticket_analysis": "templates/ticket-analysis-template.json",
+    "prd_template": "templates/prd-template.md",
+    "documentation_template": "templates/documentation-template.md"
+  },
+  "integrations": {
+    "ai_workflow_orchestrator": {
+      "enabled": true,
+      "endpoint": "/api/orchestrator",
+      "sync_frequency": "realtime"
+    },
+    "tracktok": {
+      "enabled": true,
+      "endpoint": "/api/expenses",
+      "sync_frequency": "daily"
+    }
+  },
+  "notifications": {
+    "enabled": true,
+    "channels": ["email", "slack", "webhook"],
+    "events": ["ticket_created", "prd_generated", "decision_made"]
+  }
+}
