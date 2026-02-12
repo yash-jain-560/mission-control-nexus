@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { PrismaClient } from '@prisma/client';
+import { PrismaClient, Prisma } from '@prisma/client';
 
 const prisma = new PrismaClient();
 
@@ -68,7 +68,6 @@ export async function POST(
         data: {
           agentId,
           changeType: 'HEARTBEAT',
-          fromValue: null,
           toValue: { status, health, timestamp: new Date() },
           metadata: metadata || {},
         },
