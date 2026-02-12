@@ -1,222 +1,336 @@
-# Deployment Guide - Mission Control Nexus
+# Deployment Guide - Mission Control Nexus API
+
+This document covers the deployment process for the Mission Control Nexus API on Vercel, Netlify, Railway, or self-hosted environments.
+
+## Build Status
+
+✅ **Build Successful**: The application successfully builds with Next.js 14.2.35
+- All TypeScript files compile without errors
+- All API routes are properly configured as dynamic routes
+- Static pages are prerendered correctly
 
 ## Prerequisites
-- GitHub account (repo already set up)
-- Vercel account (free tier available)
-- PostgreSQL database (Neon recommended)
 
-## Step 1: Database Setup (Neon)
+- Node.js 18+ installed
+- npm or yarn package manager
+- PostgreSQL database (Neon or Supabase recommended)
+- GitHub account with repository access
 
-### Create Neon Database
-1. Go to https://neon.tech
-2. Sign up for free account
-3. Create new project
-4. Copy the connection string:
-   ```
-   postgresql://username:password@host.neon.tech/dbname?sslmode=require
-   ```
+## Environment Variables Required
 
-### Test Connection Locally
-```bash
-# Add to .env.local
-DATABASE_URL="postgresql://username:password@host.neon.tech/dbname?sslmode=require"
+Create a `.env.local` file with the following variables:
 
-# Run migrations
-npm run prisma:generate
-npm run prisma:migrate
+```env
+# Database Connection (Required for runtime)
+DATABASE_URL="postgresql://user:password@host:5432/nexus?schema=public"
+
+# Optional
+NODE_ENV="production"
 ```
 
-## Step 2: Deploy to Vercel
+### Database Options
 
-### Option A: Via Vercel CLI (Fastest)
+#### Option 1: Neon (Recommended - Free Tier)
+1. Go to https://console.neon.tech
+2. Create a new account and project
+3. Create a database
+4. Copy the connection string
+5. Add to `.env.local` as `DATABASE_URL`
+6. Run `npm run prisma:push` to create tables
+
+#### Option 2: Supabase
+1. Go to https://supabase.com
+2. Create a new project
+3. Copy the PostgreSQL connection string
+4. Add to `.env.local` as `DATABASE_URL`
+5. Run `npm run prisma:push` to create tables
+
+#### Option 3: Local PostgreSQL
 ```bash
-# Install Vercel CLI globally
+# Install PostgreSQL
+# Create database
+createdb mission_control_nexus
+
+# Set connection string
+DATABASE_URL="postgresql://postgres:password@localhost:5432/mission_control_nexus?schema=public"
+```
+
+## Deployment Options
+
+### 1. Vercel Deployment (Recommended)
+
+#### Prerequisites
+- Vercel account (https://vercel.com)
+- GitHub repository connected
+
+#### Steps
+1. Connect your GitHub repository to Vercel dashboard
+2. Import the project
+3. Add environment variables:
+   - `DATABASE_URL`: Your PostgreSQL connection string
+4. Click "Deploy"
+5. Vercel will automatically build and deploy
+
+#### Command Line (if account is available)
+```bash
 npm install -g vercel
-
-# Deploy from repo directory
-cd /home/ubuntu/.openclaw/workspace/mission-control-nexus
-vercel
-
-# Follow prompts:
-# - Link to GitHub repo? Yes
-# - Set project name? mission-control-nexus
-# - Framework preset? Next.js
-# - Build command? npm run prisma:generate && npm run build
-# - Output directory? .next
-# - Install command? npm install
+vercel --prod --yes
 ```
 
-### Option B: Via Vercel Web Dashboard
-1. Go to https://vercel.com/import
-2. Connect GitHub repository
-3. Select `mission-control-nexus` repo
-4. Configure build settings (should auto-detect Next.js)
-5. Add environment variables (see Step 3)
-6. Click Deploy
+The deployment URL will be printed at the end.
 
-## Step 3: Set Environment Variables on Vercel
+### 2. Netlify Deployment
 
-In Vercel project settings → Environment Variables:
+#### Prerequisites
+- Netlify account (https://netlify.com)
+- GitHub repository connected
 
-```
-DATABASE_URL = postgresql://username:password@host.neon.tech/dbname?sslmode=require
-NODE_ENV = production
-NEXT_PUBLIC_API_URL = https://your-app.vercel.app  (auto-filled after first deploy)
-```
+#### Steps
+1. Connect your GitHub repository to Netlify
+2. Configure build settings:
+   - Build command: `npm run build`
+   - Publish directory: `.next`
+3. Add environment variables in Netlify dashboard:
+   - `DATABASE_URL`: Your PostgreSQL connection string
+4. Deploy
 
-## Step 4: Run Database Migrations on Vercel
+### 3. Railway Deployment
 
-After initial deployment, run migrations:
+#### Prerequisites
+- Railway account (https://railway.app)
+- GitHub repository
 
+#### Steps
+1. Go to Railway dashboard
+2. Create new project
+3. Connect GitHub repository
+4. Add PostgreSQL plugin for database
+5. Add environment variable `DATABASE_URL` from the PostgreSQL service
+6. Deploy
+
+#### Command Line
 ```bash
-# Option A: Via Vercel CLI
-vercel env pull .env.production.local
-npm run prisma:migrate
-
-# Option B: Via GitHub Actions (automatic on deploy)
-# Create .github/workflows/prisma-migrate.yml (included in repo)
+npm install -g @railway/cli
+railway login
+railway link
+railway up
 ```
 
-Or manually:
-```bash
-# Set DATABASE_URL environment variable
-export DATABASE_URL="your_neon_connection_string"
-npm run prisma:migrate
+### 4. Docker Deployment (Self-Hosted)
+
+#### Create Dockerfile
+```dockerfile
+FROM node:18-alpine
+
+WORKDIR /app
+
+COPY package*.json ./
+RUN npm ci --only=production
+
+COPY . .
+
+RUN npm run build
+
+EXPOSE 3000
+
+CMD ["npm", "start"]
 ```
 
-## Step 5: Verify Deployment
-
-### Check Vercel Dashboard
-1. Go to https://vercel.com/dashboard
-2. Click on `mission-control-nexus` project
-3. Check "Deployments" tab for latest build status
-4. Look for green checkmark = successful deploy
-
-### Test API Endpoints
-
-Get your Vercel URL (format: `https://mission-control-nexus-xxxxx.vercel.app`)
-
+#### Build and Run
 ```bash
-# Test health/home page
-curl https://mission-control-nexus-xxxxx.vercel.app/
+docker build -t mission-control-nexus .
+docker run -e DATABASE_URL="..." -p 3000:3000 mission-control-nexus
+```
 
-# Test system status
-curl https://mission-control-nexus-xxxxx.vercel.app/api/monitor/status
+### 5. Heroku Deployment
 
-# Create a test agent
-curl -X POST https://mission-control-nexus-xxxxx.vercel.app/api/agents \
+#### Prerequisites
+- Heroku CLI installed
+- Heroku account
+
+#### Steps
+```bash
+heroku create mission-control-nexus
+heroku addons:create heroku-postgresql:hobby-dev
+heroku config:set DATABASE_URL=$(heroku config:get DATABASE_URL)
+git push heroku main
+```
+
+## Post-Deployment Setup
+
+### 1. Create Database Tables
+```bash
+npm run prisma:push
+```
+
+### 2. Verify API Endpoints
+```bash
+# Health check
+curl https://your-deployment-url/api/health
+
+# Get agents
+curl https://your-deployment-url/api/agents
+
+# Get tickets
+curl https://your-deployment-url/api/tickets
+
+# Get system status
+curl https://your-deployment-url/api/monitor/status
+```
+
+### 3. Test Create Ticket
+```bash
+curl -X POST https://your-deployment-url/api/tickets \
   -H "Content-Type: application/json" \
   -d '{
-    "name": "TestAgent",
-    "status": "idle",
-    "model": "gpt-4"
+    "title": "Test Ticket",
+    "description": "Testing the API",
+    "priority": "HIGH"
   }'
-
-# List agents
-curl https://mission-control-nexus-xxxxx.vercel.app/api/agents
 ```
 
-## Step 6: Continuous Integration (Optional)
+### 4. Test Agent Heartbeat
+```bash
+curl -X POST https://your-deployment-url/api/agents/test-agent-1/heartbeat \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "Test Agent",
+    "status": "ONLINE",
+    "health": {
+      "status": "healthy",
+      "metrics": {
+        "uptime": 3600,
+        "memoryUsage": 256,
+        "cpuUsage": 15
+      }
+    }
+  }'
+```
 
-### GitHub Actions for Auto-Migration
-Create `.github/workflows/prisma-migrate.yml`:
+## Monitoring & Logs
+
+### Vercel
+- Dashboard: https://vercel.com/dashboard
+- Real-time logs in deployment details
+- Function analytics
+
+### Railway
+- Railway Dashboard: https://railway.app
+- Real-time logs
+- Deploy history
+
+### Custom/Self-Hosted
+```bash
+# Check logs
+npm run start
+
+# Use PM2 for process management
+npm install -g pm2
+pm2 start "npm run start" --name "nexus-api"
+pm2 logs nexus-api
+```
+
+## Continuous Deployment
+
+### GitHub Actions (Automated Testing & Deployment)
+
+Create `.github/workflows/deploy.yml`:
 
 ```yaml
-name: Prisma Migrate on Deploy
+name: Deploy to Vercel
 
 on:
   push:
     branches: [main]
 
 jobs:
-  migrate:
+  deploy:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v3
-      - uses: actions/setup-node@v3
+      - uses: vercel/action@master
         with:
-          node-version: '18'
-      - run: npm install
-      - run: npm run prisma:migrate
-        env:
-          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          vercel-token: ${{ secrets.VERCEL_TOKEN }}
+          vercel-org-id: ${{ secrets.VERCEL_ORG_ID }}
+          vercel-project-id: ${{ secrets.VERCEL_PROJECT_ID }}
 ```
 
 ## Troubleshooting
 
-### Build Fails: "Cannot find module 'next'"
-```bash
-# Local: Clear node_modules
-rm -rf node_modules package-lock.json
-npm install
+### Build Failures
+1. Check Node.js version: `node --version` (should be 18+)
+2. Clear npm cache: `npm cache clean --force`
+3. Delete node_modules: `rm -rf node_modules && npm install`
+4. Check build logs in deployment platform
 
-# Vercel: Click "Redeploy" in dashboard
-```
+### Database Connection Issues
+1. Verify DATABASE_URL format
+2. Test connection: `psql $DATABASE_URL`
+3. Check firewall rules (if self-hosted)
+4. Ensure database is running and accessible
 
-### Database Connection Error
-- Verify DATABASE_URL is correct in Vercel env vars
-- Check Neon network access rules
-- Ensure sslmode=require is in connection string
+### TypeScript Errors
+1. Run `npm run typecheck` locally
+2. Check for any uncommitted changes
+3. Ensure all imports are correct
 
-### Migrations Won't Run
-```bash
-# Check migration status
-npx prisma migrate status
+### API Errors
+1. Check `/api/health` endpoint
+2. Monitor `/api/monitor/status` for system health
+3. Review logs in deployment platform
+4. Check database migration status
 
-# Reset database (⚠️ CLEARS ALL DATA)
-npx prisma migrate reset
+## Performance Optimization
 
-# Deploy specific migration
-npx prisma migrate resolve --rolled-back 001_init
-```
+### Database
+- Enable query result caching
+- Use indexes (already configured in Prisma schema)
+- Consider read replicas for high load
 
-### API Returns 404
-- Check Vercel deployment logs
-- Ensure `.next` folder is built (`npm run build`)
-- Verify route files in `app/api/` directory
+### API
+- Enable compression in Next.js config
+- Use CDN for static assets
+- Implement rate limiting
 
-## Monitoring & Logs
+### Monitoring
+- Set up error tracking (Sentry, DataDog)
+- Monitor API response times
+- Track database performance
 
-### View Vercel Logs
-```bash
-vercel logs mission-control-nexus --follow
-```
+## Scaling
 
-### View Database Logs
-1. Go to Neon console
-2. Project → Monitoring
-3. Check query logs and connections
+### Horizontal Scaling
+- Deploy to multiple regions (Vercel edge functions)
+- Use load balancer (Railway, AWS ELB)
+- Database connection pooling
 
-## Rollback
+### Database Scaling
+- Read replicas for scaling reads
+- Caching layer (Redis)
+- Database sharding for very large datasets
 
-If deployment fails:
-```bash
-# Vercel automatically keeps previous deployments
-# Go to Vercel dashboard → Deployments → Click previous build → "Redeploy"
+## Security Checklist
 
-# Or revert Git commit
-git revert HEAD
-git push origin main
-```
-
-## Next Steps After Deployment
-
-1. ✅ API is live on Vercel
-2. Create dashboard UI (React components)
-3. Add WebSocket for real-time updates
-4. Set up alerting for failed tickets
-5. Create SDK/npm package for agents
-6. Add authentication (JWT/API keys)
+- [ ] DATABASE_URL is protected (not in version control)
+- [ ] HTTPS enabled on all endpoints
+- [ ] API authentication implemented if needed
+- [ ] Rate limiting enabled
+- [ ] CORS properly configured
+- [ ] Input validation in place
+- [ ] SQL injection protection via Prisma ORM
+- [ ] Regular security updates
 
 ## Support
 
-- Vercel docs: https://vercel.com/docs
-- Prisma docs: https://www.prisma.io/docs
-- Neon docs: https://neon.tech/docs
+For issues or questions:
+1. Check GitHub Issues
+2. Review deployment platform documentation
+3. Check API logs and status endpoint
+4. Verify database connectivity
 
----
+## Additional Resources
 
-**Deployment Complete!** 🚀
-
-Your API is now live. All endpoints are accessible at:
-`https://mission-control-nexus-xxxxx.vercel.app`
+- [Next.js Deployment Docs](https://nextjs.org/docs/deployment)
+- [Vercel Documentation](https://vercel.com/docs)
+- [Prisma Documentation](https://www.prisma.io/docs/)
+- [PostgreSQL Documentation](https://www.postgresql.org/docs/)
