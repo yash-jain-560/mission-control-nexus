@@ -1,19 +1,25 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
+import { withActivityLogging } from '@/middleware/activity-logging';
+import { calculateCost } from '@/lib/cost-calculator';
+import { calculateTokens } from '@/lib/token-counter';
 
 export const dynamic = 'force-dynamic';
 
 // GET /api/activities - List all activities with filtering
-export async function GET(request: NextRequest) {
+async function listActivities(request: NextRequest) {
   try {
     const searchParams = request.nextUrl.searchParams;
     const agentId = searchParams.get('agentId');
     const activityType = searchParams.get('type');
     const ticketId = searchParams.get('ticketId');
+    const traceId = searchParams.get('traceId');
+    const sessionId = searchParams.get('sessionId');
     const page = parseInt(searchParams.get('page') || '1');
     const limit = parseInt(searchParams.get('limit') || '50');
     const detailed = searchParams.get('detailed') === 'true';
     const includeContentParts = searchParams.get('includeContentParts') === 'true';
+    const includeChain = searchParams.get('includeChain') === 'true';
 
     const skip = (page - 1) * limit;
 
@@ -21,6 +27,8 @@ export async function GET(request: NextRequest) {
     if (agentId) where.agentId = agentId;
     if (activityType) where.activityType = activityType;
     if (ticketId) where.ticketId = ticketId;
+    if (traceId) where.traceId = traceId;
+    if (sessionId) where.sessionId = sessionId;
 
     let activities: any[];
     const total = await prisma.activity.count({ where });
@@ -33,10 +41,22 @@ export async function GET(request: NextRequest) {
       toolName: true,
       inputTokens: true,
       outputTokens: true,
+      totalTokens: true,
       cacheHits: true,
       duration: true,
       timestamp: true,
       ticketId: true,
+      parentActivityId: true,
+      traceId: true,
+      sessionId: true,
+      requestId: true,
+      apiEndpoint: true,
+      apiMethod: true,
+      apiStatusCode: true,
+      modelName: true,
+      costInput: true,
+      costOutput: true,
+      costTotal: true,
     };
 
     if (detailed) {
@@ -45,6 +65,7 @@ export async function GET(request: NextRequest) {
       selectFields.toolInput = true;
       selectFields.toolOutput = true;
       selectFields.metadata = true;
+      selectFields.contentParts = true;
     }
 
     if (includeContentParts) {
@@ -59,22 +80,34 @@ export async function GET(request: NextRequest) {
       select: selectFields,
     });
 
-    // Enrich with ticket info if detailed
+    // Enrich with related data if detailed
     let enrichedActivities = activities;
-    if (detailed) {
+    if (detailed || includeChain) {
       const ticketIds = activities.filter((a: any) => a.ticketId).map((a: any) => a.ticketId);
-      const tickets = ticketIds.length > 0
-        ? await prisma.ticket.findMany({
-            where: { id: { in: ticketIds } },
-            select: { id: true, title: true, status: true, priority: true },
-          })
-        : [];
+      const parentIds = activities.filter((a: any) => a.parentActivityId).map((a: any) => a.parentActivityId);
+      
+      const [tickets, parents] = await Promise.all([
+        ticketIds.length > 0
+          ? prisma.ticket.findMany({
+              where: { id: { in: ticketIds } },
+              select: { id: true, title: true, status: true, priority: true },
+            })
+          : [],
+        parentIds.length > 0 && includeChain
+          ? prisma.activity.findMany({
+              where: { id: { in: parentIds } },
+              select: { id: true, activityType: true, description: true },
+            })
+          : [],
+      ]);
 
       const ticketMap = new Map(tickets.map((t: any) => [t.id, t]));
+      const parentMap = new Map(parents.map((p: any) => [p.id, p]));
 
       enrichedActivities = activities.map((a: any) => ({
         ...a,
         ticket: a.ticketId ? ticketMap.get(a.ticketId) : undefined,
+        parent: a.parentActivityId && includeChain ? parentMap.get(a.parentActivityId) : undefined,
       }));
     }
 
@@ -83,14 +116,26 @@ export async function GET(request: NextRequest) {
       id: a.id,
       agentId: a.agentId,
       type: a.activityType,
+      activityType: a.activityType,
       description: a.description,
       timestamp: a.timestamp.toISOString?.() || a.timestamp,
-      tokens: a.inputTokens + a.outputTokens,
+      tokens: a.totalTokens || (a.inputTokens + a.outputTokens),
       inputTokens: a.inputTokens,
       outputTokens: a.outputTokens,
+      totalTokens: a.totalTokens || (a.inputTokens + a.outputTokens),
       cacheHits: a.cacheHits,
       duration: a.duration,
       toolName: a.toolName,
+      ticketId: a.ticketId,
+      parentActivityId: a.parentActivityId,
+      traceId: a.traceId,
+      sessionId: a.sessionId,
+      requestId: a.requestId,
+      apiEndpoint: a.apiEndpoint,
+      apiMethod: a.apiMethod,
+      apiStatusCode: a.apiStatusCode,
+      modelName: a.modelName,
+      costTotal: a.costTotal,
       ...(detailed && {
         inputPrompt: a.inputPrompt,
         output: a.output,
@@ -98,6 +143,7 @@ export async function GET(request: NextRequest) {
         toolOutput: a.toolOutput,
         metadata: a.metadata,
         ticket: a.ticket,
+        parent: a.parent,
       }),
       ...(includeContentParts && {
         contentParts: a.contentParts,
@@ -120,13 +166,30 @@ export async function GET(request: NextRequest) {
 }
 
 // POST /api/activities - Log a new activity
-export async function POST(request: NextRequest) {
+async function createActivity(request: NextRequest) {
   try {
     const body = (await request.json()) as Record<string, unknown>;
 
     // Validate required fields
     if (!body.agentId) {
       return NextResponse.json({ error: 'Missing required field: agentId' }, { status: 400 });
+    }
+
+    // Calculate total tokens
+    const inputTokens = (body.inputTokens as number) || 0;
+    const outputTokens = (body.outputTokens as number) || 0;
+    const totalTokens = inputTokens + outputTokens;
+
+    // Calculate costs if model name is provided
+    let costInput: number | undefined;
+    let costOutput: number | undefined;
+    let costTotal: number | undefined;
+    
+    if (body.modelName && (inputTokens > 0 || outputTokens > 0)) {
+      const cost = calculateCost(inputTokens, outputTokens, body.modelName as string);
+      costInput = cost.inputCost;
+      costOutput = cost.outputCost;
+      costTotal = cost.totalCost;
     }
 
     const activityData: any = {
@@ -138,18 +201,26 @@ export async function POST(request: NextRequest) {
       toolName: body.toolName as string | undefined,
       toolInput: body.toolInput as any,
       toolOutput: body.toolOutput as any,
-      inputTokens: (body.inputTokens as number) || 0,
-      outputTokens: (body.outputTokens as number) || 0,
+      contentParts: body.contentParts as any,
+      inputTokens,
+      outputTokens,
+      totalTokens,
       cacheHits: (body.cacheHits as number) || 0,
       duration: (body.duration as number) || 0,
       ticketId: body.ticketId as string | undefined,
+      parentActivityId: body.parentActivityId as string | undefined,
+      traceId: body.traceId as string | undefined,
+      sessionId: body.sessionId as string | undefined,
+      requestId: body.requestId as string | undefined,
+      apiEndpoint: body.apiEndpoint as string | undefined,
+      apiMethod: body.apiMethod as string | undefined,
+      apiStatusCode: body.apiStatusCode as number | undefined,
+      modelName: body.modelName as string | undefined,
+      costInput,
+      costOutput,
+      costTotal,
       metadata: body.metadata as any,
     };
-
-    // Handle contentParts - structured input/output content
-    if (body.contentParts) {
-      activityData.contentParts = body.contentParts;
-    }
 
     const activity = await prisma.activity.create({
       data: activityData,
@@ -187,15 +258,16 @@ async function updateAgentStatusFromActivity(agentId: string, activityType: stri
     if (!agent) return;
 
     let newStatus: string | null = null;
-    let reason: string = '';
 
     // Determine new status based on activity type
-    if (activityType === 'reasoning' || activityType === 'agent_turn') {
+    if (activityType === 'agent_turn' || activityType === 'reasoning') {
       newStatus = 'THINKING';
-      reason = `Started ${activityType}`;
     } else if (activityType === 'tool_call') {
       newStatus = 'WORKING';
-      reason = 'Executing tool';
+    } else if (activityType === 'completion' || activityType === 'agent_completed') {
+      newStatus = 'IDLE';
+    } else if (activityType === 'error' || activityType === 'agent_error') {
+      newStatus = 'IDLE';
     }
 
     if (!newStatus || agent.status === newStatus) return;
@@ -213,9 +285,9 @@ async function updateAgentStatusFromActivity(agentId: string, activityType: stri
         status: agent.status,
         timestamp: statusSince.toISOString(),
         durationMs,
-        reason: 'Status transition',
+        reason: `Activity: ${activityType}`,
       },
-    ].slice(-50); // Keep last 50 transitions
+    ].slice(-50);
 
     // Update agent
     await prisma.agent.update({
@@ -231,3 +303,14 @@ async function updateAgentStatusFromActivity(agentId: string, activityType: stri
     console.error('Error updating agent status:', error);
   }
 }
+
+// Wrap handlers with activity logging
+export const GET = withActivityLogging(listActivities, { 
+  activityType: 'api_call',
+  agentId: 'system'
+});
+
+export const POST = withActivityLogging(createActivity, { 
+  activityType: 'api_call',
+  agentId: 'system'
+});

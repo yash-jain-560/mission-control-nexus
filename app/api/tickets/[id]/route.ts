@@ -1,10 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
+import { withActivityLogging } from '@/middleware/activity-logging';
+import { logTicketOperation, ACTIVITY_TYPES, logActivity } from '@/lib/activity-logger';
 
 export const dynamic = 'force-dynamic';
 
 // GET /api/tickets/[id] - Get detailed ticket information
-export async function GET(
+async function getTicket(
   request: NextRequest,
   { params }: { params: { id: string } }
 ) {
@@ -44,6 +46,7 @@ export async function GET(
         timestamp: true,
         duration: true,
         metadata: true,
+        costTotal: true,
       },
     });
 
@@ -66,6 +69,7 @@ export async function GET(
       totalInput: activities.reduce((acc, a) => acc + a.inputTokens, 0),
       totalOutput: activities.reduce((acc, a) => acc + a.outputTokens, 0),
       total: 0,
+      totalCost: activities.reduce((acc, a) => acc + (a.costTotal || 0), 0),
       byActivity: activities.map(a => ({
         id: a.id,
         agentId: a.agentId,
@@ -74,6 +78,7 @@ export async function GET(
         inputTokens: a.inputTokens,
         outputTokens: a.outputTokens,
         totalTokens: a.inputTokens + a.outputTokens,
+        cost: a.costTotal,
         timestamp: a.timestamp.toISOString(),
       })),
     };
@@ -151,13 +156,14 @@ export async function GET(
 }
 
 // PUT /api/tickets/[id] - Update ticket
-export async function PUT(
+async function updateTicket(
   request: NextRequest,
   { params }: { params: { id: string } }
 ) {
   try {
     const { id } = params;
     const body = await request.json();
+    const agentId = request.headers.get('x-agent-id') || body.changedBy || 'system';
 
     const ticket = await prisma.ticket.findUnique({
       where: { id },
@@ -169,6 +175,7 @@ export async function PUT(
 
     const updates: any = {};
     const historyEntries: any[] = [];
+    let operationType: 'update' | 'assign' | 'close' = 'update';
 
     // Track status change
     if (body.status && body.status !== ticket.status) {
@@ -178,8 +185,12 @@ export async function PUT(
         changeType: 'STATUS_CHANGE',
         fromValue: { status: ticket.status },
         toValue: { status: body.status },
-        changedBy: body.changedBy || 'system',
+        changedBy: agentId,
       });
+      
+      if (body.status === 'Done') {
+        operationType = 'close';
+      }
     }
 
     // Track assignment change
@@ -190,8 +201,9 @@ export async function PUT(
         changeType: 'ASSIGNMENT_CHANGE',
         fromValue: { assigneeId: ticket.assigneeId },
         toValue: { assigneeId: body.assigneeId },
-        changedBy: body.changedBy || 'system',
+        changedBy: agentId,
       });
+      operationType = 'assign';
     }
 
     // Track priority change
@@ -202,7 +214,7 @@ export async function PUT(
         changeType: 'PRIORITY_CHANGE',
         fromValue: { priority: ticket.priority },
         toValue: { priority: body.priority },
-        changedBy: body.changedBy || 'system',
+        changedBy: agentId,
       });
     }
 
@@ -229,6 +241,30 @@ export async function PUT(
       data: updates,
     });
 
+    // Log the operation
+    await logTicketOperation(agentId, operationType, id, {
+      updates,
+      previousStatus: ticket.status,
+      newStatus: body.status,
+      previousAssignee: ticket.assigneeId,
+      newAssignee: body.assigneeId,
+    });
+
+    // If there are tokens from an agent completion, log that too
+    if (body.inputTokens || body.outputTokens) {
+      await logActivity({
+        agentId,
+        activityType: ACTIVITY_TYPES.AGENT_COMPLETED,
+        description: `Completed work on ticket: ${ticket.title}`,
+        ticketId: id,
+        inputTokens: body.inputTokens || 0,
+        outputTokens: body.outputTokens || 0,
+        inputPrompt: body.inputPrompt || '',
+        output: body.output || '',
+        duration: body.duration || 0,
+      });
+    }
+
     return NextResponse.json(updatedTicket);
   } catch (error) {
     console.error('Error updating ticket:', error);
@@ -237,16 +273,20 @@ export async function PUT(
 }
 
 // DELETE /api/tickets/[id] - Delete ticket
-export async function DELETE(
+async function deleteTicket(
   request: NextRequest,
   { params }: { params: { id: string } }
 ) {
   try {
     const { id } = params;
+    const agentId = request.headers.get('x-agent-id') || 'system';
 
     await prisma.ticket.delete({
       where: { id },
     });
+
+    // Log deletion
+    await logTicketOperation(agentId, 'delete', id, { deleted: true });
 
     return NextResponse.json({ success: true });
   } catch (error) {
@@ -254,3 +294,19 @@ export async function DELETE(
     return NextResponse.json({ error: 'Failed to delete ticket' }, { status: 500 });
   }
 }
+
+// Wrap handlers with activity logging
+export const GET = withActivityLogging(getTicket, { 
+  activityType: 'api_call',
+  agentId: 'system'
+});
+
+export const PUT = withActivityLogging(updateTicket, { 
+  activityType: 'update_ticket',
+  agentId: 'system'
+});
+
+export const DELETE = withActivityLogging(deleteTicket, { 
+  activityType: 'delete_ticket',
+  agentId: 'system'
+});

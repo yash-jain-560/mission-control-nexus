@@ -1,41 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
+import { withActivityLogging } from '@/middleware/activity-logging';
+import { logTicketOperation } from '@/lib/activity-logger';
 
 export const dynamic = 'force-dynamic';
 
-// POST /api/tickets - Create a new ticket
-export async function POST(request: NextRequest) {
-  try {
-    const body = await request.json();
-    
-    const { title, description, priority = 'MEDIUM', assigneeId, reporterId = 'system', dueDate, tags = [] } = body;
-    
-    if (!title) {
-      return NextResponse.json({ error: 'Title is required' }, { status: 400 });
-    }
-    
-    const ticket = await prisma.ticket.create({
-      data: {
-        title,
-        description,
-        priority,
-        status: 'Backlog',
-        assigneeId,
-        reporterId,
-        dueDate: dueDate ? new Date(dueDate) : undefined,
-        tags,
-      },
-    });
-    
-    return NextResponse.json(ticket, { status: 201 });
-  } catch (error) {
-    console.error('Error creating ticket:', error);
-    return NextResponse.json({ error: 'Failed to create ticket' }, { status: 500 });
-  }
-}
-
 // GET /api/tickets - List tickets with filtering and aggregations
-export async function GET(request: NextRequest) {
+async function getTickets(request: NextRequest) {
   try {
     const searchParams = request.nextUrl.searchParams;
     const status = searchParams.get('status');
@@ -99,3 +70,54 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ error: 'Failed to fetch tickets' }, { status: 500 });
   }
 }
+
+// POST /api/tickets - Create a new ticket
+async function createTicket(request: NextRequest) {
+  try {
+    const body = await request.json();
+    
+    const { title, description, priority = 'MEDIUM', assigneeId, reporterId = 'system', dueDate, tags = [] } = body;
+    
+    if (!title) {
+      return NextResponse.json({ error: 'Title is required' }, { status: 400 });
+    }
+    
+    const ticket = await prisma.ticket.create({
+      data: {
+        title,
+        description,
+        priority,
+        status: 'Backlog',
+        assigneeId,
+        reporterId,
+        dueDate: dueDate ? new Date(dueDate) : undefined,
+        tags,
+      },
+    });
+    
+    // Log ticket creation
+    const agentId = request.headers.get('x-agent-id') || reporterId || 'system';
+    await logTicketOperation(agentId, 'create', ticket.id, {
+      title,
+      description,
+      priority,
+      assigneeId,
+    });
+    
+    return NextResponse.json(ticket, { status: 201 });
+  } catch (error) {
+    console.error('Error creating ticket:', error);
+    return NextResponse.json({ error: 'Failed to create ticket' }, { status: 500 });
+  }
+}
+
+// Wrap handlers with activity logging
+export const GET = withActivityLogging(getTickets, { 
+  activityType: 'api_call',
+  agentId: 'system'
+});
+
+export const POST = withActivityLogging(createTicket, { 
+  activityType: 'create_ticket',
+  agentId: 'system'
+});

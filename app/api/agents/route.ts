@@ -1,10 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
+import { withActivityLogging } from '@/middleware/activity-logging';
+import { logActivity, ACTIVITY_TYPES } from '@/lib/activity-logger';
 
 export const dynamic = 'force-dynamic';
 
 // POST /api/agents - Register a new agent
-export async function POST(request: NextRequest) {
+async function registerAgent(request: NextRequest) {
   try {
     const body = (await request.json()) as Record<string, unknown>;
     const id = body.id as string;
@@ -43,6 +45,14 @@ export async function POST(request: NextRequest) {
       },
     });
 
+    // Log agent registration
+    await logActivity({
+      agentId: id,
+      activityType: ACTIVITY_TYPES.SYSTEM_EVENT,
+      description: `Agent ${agent ? 'updated' : 'registered'}: ${name}`,
+      metadata: { type, status: finalStatus, config },
+    });
+
     return NextResponse.json(agent, { status: 201 });
   } catch (error) {
     console.error('Error registering agent:', error);
@@ -51,7 +61,7 @@ export async function POST(request: NextRequest) {
 }
 
 // GET /api/agents - List all agents with detailed stats
-export async function GET(request: NextRequest) {
+async function listAgents(request: NextRequest) {
   try {
     const searchParams = request.nextUrl.searchParams;
     const status = searchParams.get('status');
@@ -91,10 +101,8 @@ export async function GET(request: NextRequest) {
       agents.map(async (agent) => {
         const now = Date.now();
         const lastHeartbeatTime = agent.lastHeartbeat.getTime();
-        const lastActiveTime = agent.lastActive.getTime();
 
         // Calculate online status based on heartbeat
-        const thirtySecondsMs = 30000;
         const sixtySecondsMs = 60000;
         const isOnline = (now - lastHeartbeatTime) <= sixtySecondsMs;
 
@@ -146,6 +154,7 @@ export async function GET(request: NextRequest) {
             toolName: true,
             duration: true,
             ticketId: true,
+            costTotal: true,
           },
         }) : [];
 
@@ -153,6 +162,7 @@ export async function GET(request: NextRequest) {
         const totalInputTokens = recentActivities.reduce((acc, a) => acc + a.inputTokens, 0);
         const totalOutputTokens = recentActivities.reduce((acc, a) => acc + a.outputTokens, 0);
         const totalCacheHits = recentActivities.reduce((acc, a) => acc + (a.cacheHits || 0), 0);
+        const totalCost = recentActivities.reduce((acc, a) => acc + (a.costTotal || 0), 0);
         const totalTokens = totalInputTokens + totalOutputTokens;
 
         // Get assigned tickets
@@ -189,6 +199,7 @@ export async function GET(request: NextRequest) {
             tokens: a.inputTokens + a.outputTokens,
             inputTokens: a.inputTokens,
             outputTokens: a.outputTokens,
+            cost: a.costTotal,
             timestamp: a.timestamp.toISOString(),
             tool: a.toolName,
           })),
@@ -198,6 +209,7 @@ export async function GET(request: NextRequest) {
             input: totalInputTokens,
             output: totalOutputTokens,
             cacheHits: totalCacheHits,
+            cost: totalCost,
           },
           assignedTickets,
           statusHistory: statusHistory.slice(-10),
@@ -242,3 +254,14 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ error: 'Failed to fetch agents' }, { status: 500 });
   }
 }
+
+// Wrap handlers with activity logging
+export const GET = withActivityLogging(listAgents, { 
+  activityType: 'api_call',
+  agentId: 'system'
+});
+
+export const POST = withActivityLogging(registerAgent, { 
+  activityType: 'api_call',
+  agentId: 'system'
+});

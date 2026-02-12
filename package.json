@@ -13,6 +13,7 @@
     "prisma:push": "prisma db push",
     "prisma:studio": "prisma studio",
     "test": "jest",
+    "test:activities": "tsx scripts/test-activity-logging.ts",
     "typecheck": "tsc --noEmit"
   },
   "keywords": [
