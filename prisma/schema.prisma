@@ -12,11 +12,12 @@ datasource db {
 
 // Agent Status and Monitoring
 model Agent {
-  id            String   @id @default(cuid())
-  agentId       String   @unique
+  id            String   @id  // Use provided ID directly (e.g., 'orbit-main')
   name          String
-  type          String   // 'worker', 'coordinator', 'monitor', etc.
-  status        String   @default("OFFLINE") // ONLINE, OFFLINE, IDLE, BUSY, ERROR, UNKNOWN
+  type          String   @default("main") // 'worker', 'coordinator', 'monitor', etc.
+  status        String   @default("offline") // online, offline, idle, busy, error
+  tokensAvailable Int    @default(1000000)
+  tokensUsed    Int      @default(0)
   
   // Health metrics
   health        Json     @default("{\"status\": \"unknown\", \"lastCheck\": null, \"metrics\": {}}")
@@ -34,7 +35,6 @@ model Agent {
   heartbeats    Heartbeat[]
   history       AgentHistory[]
 
-  @@index([agentId])
   @@index([status])
   @@index([lastHeartbeat])
   @@index([lastActive])
@@ -48,8 +48,10 @@ model Heartbeat {
   status    String
   health    Json     @default("{}")
   metadata  Json     @default("{}")
+  tokensUsed Int     @default(0)
+  tokensAvailable Int @default(0)
   
-  agent     Agent    @relation(fields: [agentId], references: [agentId], onDelete: Cascade)
+  agent     Agent    @relation(fields: [agentId], references: [id], onDelete: Cascade)
   
   @@index([agentId])
   @@index([timestamp])
@@ -65,7 +67,7 @@ model AgentHistory {
   timestamp  DateTime @default(now())
   metadata   Json     @default("{}")
   
-  agent      Agent    @relation(fields: [agentId], references: [agentId], onDelete: Cascade)
+  agent      Agent    @relation(fields: [agentId], references: [id], onDelete: Cascade)
   
   @@index([agentId])
   @@index([timestamp])

@@ -6,7 +6,7 @@ export const dynamic = 'force-dynamic';
 // POST /api/agents - Register a new agent
 export async function POST(request: NextRequest) {
   try {
-    const body = await request.json();
+    const body = await request.json() as any;
     const { id, name, type = 'main', status = 'active', tokensAvailable = 1000000 } = body;
 
     if (!id || !name) {
@@ -18,7 +18,7 @@ export async function POST(request: NextRequest) {
       update: {
         name,
         type,
-        status,
+        status: status.toLowerCase(),
         tokensAvailable,
         lastHeartbeat: new Date(),
       },
@@ -26,7 +26,7 @@ export async function POST(request: NextRequest) {
         id,
         name,
         type,
-        status,
+        status: status.toLowerCase(),
         tokensAvailable,
         lastHeartbeat: new Date(),
       },
