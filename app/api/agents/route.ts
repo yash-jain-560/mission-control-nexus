@@ -6,8 +6,12 @@ export const dynamic = 'force-dynamic';
 // POST /api/agents - Register a new agent
 export async function POST(request: NextRequest) {
   try {
-    const body = await request.json() as any;
-    const { id, name, type = 'main', status = 'active', tokensAvailable = 1000000 } = body;
+    const body = (await request.json()) as Record<string, unknown>;
+    const id = body.id as string;
+    const name = body.name as string;
+    const type = (body.type as string) || 'main';
+    const status = ((body.status as string) || 'active').toLowerCase();
+    const tokensAvailable = (body.tokensAvailable as number) || 1000000;
 
     if (!id || !name) {
       return NextResponse.json({ error: 'Missing required fields: id, name' }, { status: 400 });
@@ -18,16 +22,16 @@ export async function POST(request: NextRequest) {
       update: {
         name,
         type,
-        status: status.toLowerCase(),
-        tokensAvailable,
+        status,
+        tokensAvailable: Math.floor(tokensAvailable),
         lastHeartbeat: new Date(),
       },
       create: {
         id,
         name,
         type,
-        status: status.toLowerCase(),
-        tokensAvailable,
+        status,
+        tokensAvailable: Math.floor(tokensAvailable),
         lastHeartbeat: new Date(),
       },
     });

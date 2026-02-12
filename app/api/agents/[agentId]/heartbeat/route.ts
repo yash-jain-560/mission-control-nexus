@@ -8,46 +8,36 @@ export async function POST(
 ) {
   try {
     const agentId = params.agentId;
-    const body = await request.json();
+    const body = (await request.json()) as Record<string, unknown>;
     
-    const { status, health, metadata } = body;
+    const status = ((body.status as string) || 'active').toLowerCase();
+    const tokensUsed = (body.tokensUsed as number) || 0;
+    const tokensAvailable = (body.tokensAvailable as number) || 1000000;
+    const metadata = body.metadata as Record<string, unknown> || {};
     
-    if (!status) {
-      return NextResponse.json({ error: 'Status is required' }, { status: 400 });
-    }
-    
-    // Find or create agent
-    let agent = await prisma.agent.findUnique({
-      where: { agentId },
+    // Update agent
+    const agent = await prisma.agent.upsert({
+      where: { id: agentId },
+      update: {
+        status,
+        tokensUsed: Math.floor(tokensUsed),
+        tokensAvailable: Math.floor(tokensAvailable),
+        lastHeartbeat: new Date(),
+        lastActive: new Date(),
+        metadata,
+      },
+      create: {
+        id: agentId,
+        name: (body.name as string) || agentId,
+        type: (body.type as string) || 'main',
+        status,
+        tokensUsed: Math.floor(tokensUsed),
+        tokensAvailable: Math.floor(tokensAvailable),
+        lastHeartbeat: new Date(),
+        lastActive: new Date(),
+        metadata,
+      },
     });
-    
-    if (!agent) {
-      // Create new agent if not exists
-      agent = await prisma.agent.create({
-        data: {
-          agentId,
-          name: body.name || agentId,
-          type: body.type || 'worker',
-          status,
-          health: health || { status: 'unknown', lastCheck: new Date(), metrics: {} },
-          lastHeartbeat: new Date(),
-          lastActive: new Date(),
-          metadata: metadata || {},
-        },
-      });
-    } else {
-      // Update existing agent
-      agent = await prisma.agent.update({
-        where: { agentId },
-        data: {
-          status,
-          ...(health && { health }),
-          lastHeartbeat: new Date(),
-          lastActive: new Date(),
-          ...(metadata && { metadata }),
-        },
-      });
-    }
     
     // Record heartbeat in history
     await prisma.heartbeat.create({
@@ -55,22 +45,21 @@ export async function POST(
         agentId,
         timestamp: new Date(),
         status,
-        health: health || {},
-        metadata: metadata || {},
+        tokensUsed: Math.floor(tokensUsed),
+        tokensAvailable: Math.floor(tokensAvailable),
+        metadata,
       },
     });
     
-    // Record status change in history if status changed
-    if (agent) {
-      await prisma.agentHistory.create({
-        data: {
-          agentId,
-          changeType: 'HEARTBEAT',
-          toValue: { status, health, timestamp: new Date() },
-          metadata: metadata || {},
-        },
-      });
-    }
+    // Record status change in history
+    await prisma.agentHistory.create({
+      data: {
+        agentId,
+        changeType: 'HEARTBEAT',
+        toValue: { status, tokensUsed, timestamp: new Date() },
+        metadata,
+      },
+    });
     
     return NextResponse.json({
       message: 'Heartbeat received',
