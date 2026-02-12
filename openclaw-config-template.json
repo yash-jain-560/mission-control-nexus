@@ -1,0 +1,146 @@
+{
+  "comment": "Multi-Model Orchestration Configuration - Add GEMINI_API_KEY to your environment before using",
+  
+  "agents": {
+    "defaults": {
+      "heartbeat": {
+        "every": "5m",
+        "prompt": "Check: Any blockers, opportunities, or progress updates needed?"
+      }
+    },
+    
+    "main": {
+      "name": "Orbit (Orchestrator)",
+      "model": "gemini-2.0-flash",
+      "description": "Multi-agent orchestrator - routes tasks to work agents using Gemini for coordination",
+      "allowlistAgents": ["work", "personal"],
+      "thinking": "low"
+    },
+    
+    "work": {
+      "name": "Codex (Implementation)",
+      "model": "claude-haiku-4-5",
+      "description": "Code generation, testing, documentation - Anthropic Haiku for cost efficiency",
+      "thinking": "off"
+    },
+    
+    "personal": {
+      "name": "Apex (Reasoning)",
+      "model": "claude-sonnet-4-5",
+      "description": "Complex reasoning, architecture, design reviews - Anthropic Sonnet for complex problems",
+      "thinking": "medium"
+    }
+  },
+
+  "models": {
+    "gemini": {
+      "provider": "google",
+      "apiKeyEnv": "GEMINI_API_KEY",
+      "models": [
+        "gemini-2.0-flash",
+        "gemini-2.0-pro"
+      ],
+      "quotas": {
+        "gemini-2.0-flash": "12.5M tokens/day (free)",
+        "gemini-2.0-pro": "1M tokens/day (free)"
+      }
+    },
+    
+    "anthropic": {
+      "provider": "anthropic",
+      "apiKeyEnv": "ANTHROPIC_API_KEY",
+      "models": [
+        "claude-haiku-4-5",
+        "claude-sonnet-4-5"
+      ],
+      "pricing": {
+        "claude-haiku-4-5": "$0.80 per 1M input tokens",
+        "claude-sonnet-4-5": "$3.00 per 1M input tokens"
+      }
+    }
+  },
+
+  "routing": {
+    "strategy": "multi-model-cost-optimized",
+    "rules": {
+      "orchestration": {
+        "primary": "gemini-2.0-flash",
+        "fallback": "claude-haiku-4-5",
+        "estimatedTokens": 5000,
+        "estimatedCost": "$0"
+      },
+      
+      "implementation": {
+        "primary": "claude-haiku-4-5",
+        "fallback": "gemini-2.0-flash",
+        "estimatedTokens": 20000,
+        "estimatedCost": "$0.016"
+      },
+      
+      "testing": {
+        "primary": "gemini-2.0-flash",
+        "fallback": "claude-haiku-4-5",
+        "estimatedTokens": 8000,
+        "estimatedCost": "$0"
+      },
+      
+      "documentation": {
+        "primary": "claude-haiku-4-5",
+        "fallback": "gemini-2.0-flash",
+        "estimatedTokens": 15000,
+        "estimatedCost": "$0.012"
+      },
+      
+      "design_review": {
+        "primary": "claude-sonnet-4-5",
+        "fallback": "claude-haiku-4-5",
+        "estimatedTokens": 80000,
+        "estimatedCost": "$0.24"
+      },
+      
+      "debugging": {
+        "primary": "claude-sonnet-4-5",
+        "fallback": "claude-haiku-4-5",
+        "estimatedTokens": 60000,
+        "estimatedCost": "$0.18"
+      }
+    }
+  },
+
+  "costControl": {
+    "dailyBudget": "$5.00",
+    "monthlyBudget": "$150.00",
+    "alerts": {
+      "dailyThreshold": "$4.00",
+      "weeklyThreshold": "$30.00"
+    },
+    "estimatedMonthlyCost": "$4.50 (vs $900 with Anthropic-only)",
+    "savings": "98% cost reduction"
+  },
+
+  "environment": {
+    "required": [
+      "GEMINI_API_KEY=<get-from-https://ai.google.dev/>",
+      "ANTHROPIC_API_KEY=<existing>"
+    ],
+    "optional": [
+      "MODEL_OVERRIDE_ORCHESTRATION=gemini-2.0-flash",
+      "MODEL_OVERRIDE_IMPLEMENTATION=claude-haiku-4-5",
+      "MODEL_OVERRIDE_REASONING=claude-sonnet-4-5",
+      "TOKEN_BUDGET_DAILY=350000",
+      "COST_ALERT_EMAIL=<your-email>"
+    ]
+  },
+
+  "implementation": {
+    "phase": "1-setup",
+    "steps": [
+      "1. Get Gemini API key from https://ai.google.dev/",
+      "2. Add GEMINI_API_KEY to your environment",
+      "3. Copy this config to openclaw.json",
+      "4. Restart OpenClaw: openclaw gateway restart",
+      "5. Verify: openclaw status",
+      "6. Monitor: Check task routing in logs"
+    ]
+  }
+}
