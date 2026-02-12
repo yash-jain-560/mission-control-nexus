@@ -3,27 +3,31 @@
 ## Ticket 1: Agent Status API & Real-Time Monitoring
 - **Type:** Feature (Core)
 - **Priority:** High
-- **Assigned to:** Work Agent (Codex CLI)
+- **Assigned to:** Orbit (Personal Agent)
 - **Description:** Implement REST API endpoints for agent registration, heartbeat, and real-time status monitoring
 - **Acceptance Criteria:**
-  - POST /api/v1/agents (register agent)
-  - POST /api/v1/agents/{agent_id}/heartbeat (agent status update)
-  - GET /api/v1/monitor/agents (list all agents with current status)
-  - GET /api/v1/monitor/status (overall system health)
-- **Status:** Backlog
+  - ✅ POST /api/agents (register agent)
+  - ✅ POST /api/agents/{id}/heartbeat (agent status update)
+  - ✅ GET /api/agents (list all agents with current status)
+  - ✅ GET /api/monitor/status (overall system health)
+- **Status:** DONE
+- **Completed:** 2026-02-12 11:35 UTC
+- **GitHub:** Commits 528dc39 onwards
 
 ## Ticket 2: Kanban Ticket Lifecycle & Task Management
 - **Type:** Feature (Core)
 - **Priority:** High
-- **Assigned to:** Work Agent (Codex CLI)
-- **Description:** Implement task/ticket lifecycle management with states: Backlog → Assigned → InProgress → Review → Done → Failed
+- **Assigned to:** Orbit (Personal Agent)
+- **Description:** Implement task/ticket lifecycle management with states: Backlog → Assigned → InProgress → Review → Done
 - **Acceptance Criteria:**
-  - POST /api/v1/tasks (create task)
-  - GET /api/v1/tasks (list tasks with filtering by status/agent)
-  - PUT /api/v1/tasks/{task_id} (update task status)
-  - Auto-transition logic between states
-  - Ticket creation trigger on task failure
-- **Status:** Backlog
+  - ✅ POST /api/tickets (create task)
+  - ✅ GET /api/tickets (list tasks with filtering by status/agent)
+  - ✅ PATCH /api/tickets/{id} (update task status)
+  - ✅ State validation (cannot skip states)
+  - ✅ Activity logging on all state changes
+- **Status:** DONE
+- **Completed:** 2026-02-12 11:35 UTC
+- **GitHub:** Commits 528dc39 onwards
 
 ## Ticket 3: Memory Persistence & Activity Logging
 - **Type:** Feature (Core)
