@@ -1,7 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { PrismaClient } from '@prisma/client';
-
-const prisma = new PrismaClient();
+import { prisma } from '@/lib/prisma';
 
 // Valid ticket statuses in Kanban workflow
 const VALID_STATUSES = ['Backlog', 'Assigned', 'InProgress', 'Review', 'Done'];
