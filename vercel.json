@@ -1,0 +1,8 @@
+{
+  "buildCommand": "npm run prisma:generate && npm run build",
+  "installCommand": "npm install",
+  "env": {
+    "NODE_ENV": "production"
+  },
+  "envPrefix": "NEXT_PUBLIC_"
+}
