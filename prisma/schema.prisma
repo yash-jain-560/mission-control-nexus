@@ -15,12 +15,19 @@ model Agent {
   id            String   @id  // Use provided ID directly (e.g., 'orbit-main')
   name          String
   type          String   @default("main") // 'worker', 'coordinator', 'monitor', etc.
-  status        String   @default("offline") // online, offline, idle, busy, error
+  status        String   @default("OFFLINE") // IDLE, THINKING, WORKING, OFFLINE
   tokensAvailable Int    @default(1000000)
   tokensUsed    Int      @default(0)
   
   // Health metrics
   health        Json     @default("{\"status\": \"unknown\", \"lastCheck\": null, \"metrics\": {}}")
+  
+  // Status tracking with detailed transitions
+  statusHistory Json     @default("[]") // Array of { status, timestamp, durationMs, reason }
+  currentStatusSince DateTime @default(now()) // When current status started
+  
+  // Configuration
+  config        Json     @default("{}") // Agent-specific configuration
   
   // Timestamps
   lastHeartbeat DateTime @default(now())
@@ -50,9 +57,9 @@ model Heartbeat {
   metadata  Json     @default("{}")
   tokensUsed Int     @default(0)
   tokensAvailable Int @default(0)
-  
+
   agent     Agent    @relation(fields: [agentId], references: [id], onDelete: Cascade)
-  
+
   @@index([agentId])
   @@index([timestamp])
 }
@@ -66,9 +73,9 @@ model AgentHistory {
   toValue    Json?
   timestamp  DateTime @default(now())
   metadata   Json     @default("{}")
-  
+
   agent      Agent    @relation(fields: [agentId], references: [id], onDelete: Cascade)
-  
+
   @@index([agentId])
   @@index([timestamp])
   @@index([changeType])
@@ -81,57 +88,100 @@ model Ticket {
   description String?
   status      String   @default("Backlog") // Backlog, Assigned, InProgress, Review, Done
   priority    String   @default("MEDIUM") // LOW, MEDIUM, HIGH, URGENT, CRITICAL
-  
+
   // Assignment
   assigneeId  String?
   reporterId  String   @default("system")
-  
+
+  // Token tracking for ticket
+  totalInputTokens  Int      @default(0)
+  totalOutputTokens Int      @default(0)
+
   // Dates
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
   dueDate     DateTime?
-  
+
   // Metadata
   tags        String[] @default([])
   metadata    Json     @default("{}")
-  
+
   // Relations
   activities  Activity[]
-  
+  history     TicketHistory[]
+  comments    TicketComment[]
+
   @@index([status])
   @@index([priority])
   @@index([assigneeId])
   @@index([createdAt])
 }
 
+// Ticket History (Status changes, assignments)
+model TicketHistory {
+  id          String   @id @default(cuid())
+  ticketId    String
+  changeType  String   // STATUS_CHANGE, ASSIGNMENT_CHANGE, PRIORITY_CHANGE, COMMENT
+  fromValue   Json?
+  toValue     Json?
+  changedBy   String   // agentId or 'system'
+  timestamp   DateTime @default(now())
+  metadata    Json     @default("{}")
+
+  ticket      Ticket   @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+
+  @@index([ticketId])
+  @@index([timestamp])
+  @@index([changeType])
+}
+
+// Ticket Comments
+model TicketComment {
+  id          String   @id @default(cuid())
+  ticketId    String
+  authorId    String   // agentId or 'system'
+  content     String
+  timestamp   DateTime @default(now())
+  metadata    Json     @default("{}")
+
+  ticket      Ticket   @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+
+  @@index([ticketId])
+  @@index([timestamp])
+}
+
 // Agent Activity Log
 model Activity {
   id          String   @id @default(cuid())
   agentId     String
-  activityType String   // agent_turn, tool_call, completion, error, status_change
+  activityType String   // agent_turn, tool_call, completion, error, status_change, reasoning
   description String
-  
+
   // Full activity details
   inputPrompt String?   // Full user input
   output      String?   // Full model output / result
   toolName    String?   // Tool used if applicable
   toolInput   Json?
   toolOutput  Json?
-  
+
+  // Content Parts - Full request/response payload details
+  contentParts Json?    // JSON containing input and output content parts
+
   // Token tracking
   inputTokens  Int      @default(0)
   outputTokens Int      @default(0)
-  
+  cacheHits    Int      @default(0)  // Cache hit count for efficiency tracking
+
   // Timestamps
   timestamp   DateTime  @default(now())
   duration    Int       @default(0) // milliseconds
-  
+
   // Metadata
   metadata    Json      @default("{}")
   ticketId    String?   // Link to ticket if applicable
-  
+
   ticket      Ticket?   @relation(fields: [ticketId], references: [id], onDelete: SetNull)
-  
+
   @@index([agentId])
   @@index([timestamp])
   @@index([activityType])

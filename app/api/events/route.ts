@@ -8,7 +8,7 @@ function sseData(data: unknown) {
 }
 
 async function getSnapshot() {
-  const [agents, tickets, activities, agentHistory] = await Promise.all([
+  const [agents, tickets, activities] = await Promise.all([
     prisma.agent.findMany({
       orderBy: { lastHeartbeat: 'desc' },
       take: 50,
@@ -44,36 +44,66 @@ async function getSnapshot() {
         timestamp: true,
         inputTokens: true,
         outputTokens: true,
+        cacheHits: true,
         toolName: true,
-      },
-    }),
-    prisma.agentHistory.findMany({
-      orderBy: { timestamp: 'desc' },
-      take: 50,
-      select: {
-        id: true,
-        agentId: true,
-        changeType: true,
-        timestamp: true,
-        fromValue: true,
-        toValue: true,
+        duration: true,
       },
     }),
   ])
 
-  // Enrich agents with online status
+  // Enrich agents with online status and refined status tracking
   const enrichedAgents = agents.map((agent: any) => {
-    const timeSinceHeartbeat = Date.now() - new Date(agent.lastHeartbeat).getTime()
-    const isOnline = timeSinceHeartbeat <= 30000
+    const now = Date.now()
+    const lastHeartbeatTime = new Date(agent.lastHeartbeat).getTime()
+    const timeSinceHeartbeat = now - lastHeartbeatTime
+    const sixtySecondsMs = 60000
+    const isOnline = timeSinceHeartbeat <= sixtySecondsMs
+
+    // Calculate time in current status
+    const currentStatusSince = new Date(agent.currentStatusSince || agent.lastHeartbeat).getTime()
+    const timeInCurrentStatus = now - currentStatusSince
+
+    // Determine effective status
+    let effectiveStatus = agent.status
+    if (!isOnline) {
+      effectiveStatus = 'OFFLINE'
+    } else if (agent.status === 'OFFLINE') {
+      effectiveStatus = 'IDLE'
+    }
+
+    // Parse status history
+    const statusHistory = Array.isArray(agent.statusHistory) ? agent.statusHistory : []
+
+    // Calculate recent token stats from activities
+    const agentActivities = activities.filter((a: any) => a.agentId === agent.id)
+    const totalInput = agentActivities.reduce((acc: number, a: any) => acc + (a.inputTokens || 0), 0)
+    const totalOutput = agentActivities.reduce((acc: number, a: any) => acc + (a.outputTokens || 0), 0)
+    const totalCacheHits = agentActivities.reduce((acc: number, a: any) => acc + (a.cacheHits || 0), 0)
 
     return {
-      ...agent,
+      id: agent.id,
+      name: agent.name,
+      type: agent.type,
+      status: effectiveStatus,
       isOnline,
+      tokensUsed: agent.tokensUsed,
+      tokensAvailable: agent.tokensAvailable,
       lastHeartbeat: agent.lastHeartbeat.toISOString?.() || agent.lastHeartbeat,
+      timeInCurrentStatus,
+      statusHistory,
+      tokenStats: {
+        recent: totalInput + totalOutput,
+        total: agent.tokensUsed,
+        input: totalInput,
+        output: totalOutput,
+        cacheHits: totalCacheHits,
+      },
+      config: agent.config,
+      metadata: agent.metadata,
     }
   })
 
-  // Convert activities to feed format
+  // Convert activities to feed format with enhanced token data
   const activityFeed = activities.map((a) => ({
     id: a.id,
     agentId: a.agentId,
@@ -82,23 +112,33 @@ async function getSnapshot() {
     message: `${a.description}`,
     timestamp: a.timestamp.toISOString?.() || a.timestamp,
     tokens: a.inputTokens + a.outputTokens,
+    inputTokens: a.inputTokens,
+    outputTokens: a.outputTokens,
+    cacheHits: a.cacheHits,
+    toolName: a.toolName,
+    duration: a.duration,
   }))
 
-  // Summary stats
+  // Summary stats with status breakdown
   const totalTokens = agents.reduce((acc: number, a: any) => acc + (a.tokensUsed || 0), 0)
   const onlineCount = enrichedAgents.filter((a: any) => a.isOnline).length
 
-  return { 
-    agents: enrichedAgents, 
-    tickets, 
+  const statusBreakdown = enrichedAgents.reduce((acc: Record<string, number>, a: any) => {
+    acc[a.status] = (acc[a.status] || 0) + 1
+    return acc
+  }, {})
+
+  return {
+    agents: enrichedAgents,
+    tickets,
     activities: activityFeed,
-    statusHistory: agentHistory,
     summary: {
       totalAgents: enrichedAgents.length,
       onlineAgents: onlineCount,
       offlineAgents: enrichedAgents.length - onlineCount,
       totalTokensUsed: totalTokens,
       systemHealth: onlineCount / (enrichedAgents.length || 1) > 0.7 ? 'Healthy' : 'Degraded',
+      statusBreakdown,
     },
   }
 }

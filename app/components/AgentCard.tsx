@@ -1,7 +1,7 @@
 'use client'
 
 import { useMemo, useState } from 'react'
-import { formatRelativeTime, statusTone } from '@/lib/utils'
+import { formatRelativeTime } from '@/lib/utils'
 import { Area, AreaChart, ResponsiveContainer, Tooltip, XAxis } from 'recharts'
 
 type Agent = {
@@ -14,13 +14,21 @@ type Agent = {
   tokensUsed?: number
   tokensAvailable?: number
   lastHeartbeat: string
+  timeInCurrentStatus?: number
+  statusHistory?: Array<{ status: string; timestamp: string; durationMs: number }>
   assignedTickets: Array<{ id: string; title: string; status: string; priority?: string }>
-  recentActivities: Array<{ id: string; message: string; timestamp: string; tokens?: number }>
+  recentActivities: Array<{ id: string; message: string; timestamp: string; tokens?: number; inputTokens?: number; outputTokens?: number }>
+  tokenStats?: {
+    recent: number
+    total: number
+    input: number
+    output: number
+    cacheHits: number
+  }
 }
 
 export function AgentCard({ agent }: { agent: Agent }) {
   const [open, setOpen] = useState(false)
-  const [activityDetail, setActivityDetail] = useState<any>(null)
 
   const tokenSeries = useMemo(
     () =>
@@ -28,13 +36,39 @@ export function AgentCard({ agent }: { agent: Agent }) {
         step: i + 1,
         tokens: Math.max(0, Math.round((agent.tokensUsed || 2000) * (0.35 + Math.random() * 0.75))),
       })),
-    [agent.tokensUsed],
+    [agent.tokensUsed]
   )
 
-  const getStatusColor = () => {
-    return agent.isOnline
-      ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/30'
-      : 'bg-red-500/20 text-red-300 border-red-500/30'
+  const getStatusColor = (status: string) => {
+    switch (status) {
+      case 'IDLE':
+        return 'bg-emerald-500/20 text-emerald-300 border-emerald-500/30'
+      case 'THINKING':
+        return 'bg-amber-500/20 text-amber-300 border-amber-500/30'
+      case 'WORKING':
+        return 'bg-blue-500/20 text-blue-300 border-blue-500/30'
+      case 'OFFLINE':
+        return 'bg-slate-500/20 text-slate-300 border-slate-500/30'
+      default:
+        return agent.isOnline
+          ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/30'
+          : 'bg-red-500/20 text-red-300 border-red-500/30'
+    }
+  }
+
+  const getStatusIcon = (status: string) => {
+    switch (status) {
+      case 'IDLE':
+        return '⏸️'
+      case 'THINKING':
+        return '🧠'
+      case 'WORKING':
+        return '⚡'
+      case 'OFFLINE':
+        return '💤'
+      default:
+        return agent.isOnline ? '🟢' : '🔴'
+    }
   }
 
   const getPriorityColor = (priority?: string) => {
@@ -50,6 +84,14 @@ export function AgentCard({ agent }: { agent: Agent }) {
     }
   }
 
+  // Format duration
+  const formatDuration = (ms: number) => {
+    if (ms < 1000) return `${ms}ms`
+    if (ms < 60000) return `${Math.floor(ms / 1000)}s`
+    if (ms < 3600000) return `${Math.floor(ms / 60000)}m`
+    return `${Math.floor(ms / 3600000)}h`
+  }
+
   return (
     <>
       <button
@@ -58,8 +100,8 @@ export function AgentCard({ agent }: { agent: Agent }) {
       >
         <div className="flex items-center justify-between mb-2">
           <h4 className="font-semibold text-slate-100">{agent.name}</h4>
-          <span className={`text-xs px-2 py-1 rounded border ${getStatusColor()}`}>
-            {agent.isOnline ? 'Online' : 'Offline'}
+          <span className={`text-xs px-2 py-1 rounded border ${getStatusColor(agent.status)}`}>
+            {getStatusIcon(agent.status)} {agent.status}
           </span>
         </div>
 
@@ -121,9 +163,22 @@ export function AgentCard({ agent }: { agent: Agent }) {
                     </AreaChart>
                   </ResponsiveContainer>
                 </div>
-                <p className="text-xs text-slate-400 mt-2">
-                  Total: {(agent.tokensUsed || 0).toLocaleString()} tokens
-                </p>
+                {agent.tokenStats && (
+                  <div className="mt-3 grid grid-cols-3 gap-2 text-center">
+                    <div>
+                      <p className="text-xs text-slate-500">Total</p>
+                      <p className="text-sm font-semibold text-white">{agent.tokenStats.total.toLocaleString()}</p>
+                    </div>
+                    <div>
+                      <p className="text-xs text-slate-500">Recent</p>
+                      <p className="text-sm font-semibold text-emerald-400">{agent.tokenStats.recent.toLocaleString()}</p>
+                    </div>
+                    <div>
+                      <p className="text-xs text-slate-500">Cache Hits</p>
+                      <p className="text-sm font-semibold text-purple-400">{agent.tokenStats.cacheHits.toLocaleString()}</p>
+                    </div>
+                  </div>
+                )}
               </div>
 
               {/* Status & Health */}
@@ -132,9 +187,16 @@ export function AgentCard({ agent }: { agent: Agent }) {
                 <div className="space-y-3">
                   <div>
                     <p className="text-xs text-slate-400">Current Status</p>
-                    <p className={`text-sm font-semibold mt-1 ${agent.isOnline ? 'text-emerald-400' : 'text-red-400'}`}>
-                      {agent.isOnline ? '✓ Online' : '✗ Offline'}
-                    </p>
+                    <div className="flex items-center gap-2 mt-1">
+                      <span className={`text-sm font-semibold ${agent.isOnline ? 'text-emerald-400' : 'text-slate-400'}`}>
+                        {getStatusIcon(agent.status)} {agent.status}
+                      </span>
+                      {agent.timeInCurrentStatus && (
+                        <span className="text-xs text-slate-500">
+                          for {formatDuration(agent.timeInCurrentStatus)}
+                        </span>
+                      )}
+                    </div>
                   </div>
                   <div>
                     <p className="text-xs text-slate-400">Last Heartbeat</p>
@@ -146,7 +208,7 @@ export function AgentCard({ agent }: { agent: Agent }) {
                       <div
                         className="h-full bg-blue-500"
                         style={{
-                          width: `${((agent.tokensUsed || 0) / (agent.tokensAvailable || 1000000)) * 100}%`,
+                          width: `${Math.min(((agent.tokensUsed || 0) / (agent.tokensAvailable || 1000000)) * 100, 100)}%`,
                         }}
                       />
                     </div>
@@ -156,6 +218,23 @@ export function AgentCard({ agent }: { agent: Agent }) {
                   </div>
                 </div>
               </div>
+
+              {/* Status History */}
+              {agent.statusHistory && agent.statusHistory.length > 0 && (
+                <div className="rounded-lg border border-slate-800 p-4 bg-slate-900/60">
+                  <p className="text-sm text-slate-400 mb-3 font-semibold">Recent Status History</p>
+                  <div className="space-y-2 max-h-48 overflow-auto">
+                    {agent.statusHistory.slice(-5).reverse().map((transition, i) => (
+                      <div key={i} className="flex items-center justify-between text-sm">
+                        <span className="text-slate-300">{transition.status}</span>
+                        <span className="text-xs text-slate-500">
+                          {formatDuration(transition.durationMs || 0)}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
 
               {/* Assigned Tickets */}
               <div className="rounded-lg border border-slate-800 p-4 bg-slate-900/60">
@@ -182,7 +261,7 @@ export function AgentCard({ agent }: { agent: Agent }) {
               </div>
 
               {/* Recent Activities */}
-              <div className="rounded-lg border border-slate-800 p-4 bg-slate-900/60">
+              <div className="rounded-lg border border-slate-800 p-4 bg-slate-900/60 md:col-span-2">
                 <p className="text-sm text-slate-400 mb-3 font-semibold">Recent Activities</p>
                 {agent.recentActivities.length === 0 ? (
                   <p className="text-sm text-slate-500">No recent activities</p>
@@ -191,54 +270,29 @@ export function AgentCard({ agent }: { agent: Agent }) {
                     {agent.recentActivities.map((a) => (
                       <li
                         key={a.id}
-                        className="text-xs text-slate-300 p-2 bg-slate-800/50 rounded border border-slate-700 cursor-pointer hover:border-blue-500/50 transition-colors"
-                        onClick={() => setActivityDetail(a)}
+                        className="text-xs text-slate-300 p-2 bg-slate-800/50 rounded border border-slate-700"
                       >
                         <div className="font-mono line-clamp-2">{a.message}</div>
                         <div className="flex justify-between items-center mt-1 text-slate-500">
                           <span>{formatRelativeTime(a.timestamp)}</span>
-                          {a.tokens && <span>Tokens: {a.tokens}</span>}
+                          {(a.tokens || a.inputTokens || a.outputTokens) && (
+                            <span className="text-slate-400">
+                              {a.inputTokens !== undefined && (
+                                <span className="text-emerald-400">↑{a.inputTokens.toLocaleString()}</span>
+                              )}
+                              {' '}
+                              {a.outputTokens !== undefined && (
+                                <span className="text-blue-400">↓{a.outputTokens.toLocaleString()}</span>
+                              )}
+                              {a.tokens && a.tokens.toLocaleString()}
+                            </span>
+                          )}
                         </div>
                       </li>
                     ))}
                   </ul>
                 )}
               </div>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {activityDetail && (
-        <div
-          className="fixed inset-0 z-50 bg-black/70 p-4 flex items-center justify-center"
-          onClick={() => setActivityDetail(null)}
-        >
-          <div
-            className="bg-slate-900 border border-slate-800 rounded-lg max-w-2xl w-full p-6"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div className="flex items-center justify-between mb-4">
-              <h4 className="text-lg font-semibold text-white">Activity Details</h4>
-              <button className="text-slate-400 hover:text-white text-2xl" onClick={() => setActivityDetail(null)}>
-                ×
-              </button>
-            </div>
-            <div className="space-y-4 max-h-[60vh] overflow-auto">
-              <div>
-                <p className="text-sm text-slate-400 mb-1">Message</p>
-                <p className="text-sm text-slate-200 bg-slate-800/50 p-3 rounded font-mono">{activityDetail.message}</p>
-              </div>
-              <div>
-                <p className="text-sm text-slate-400 mb-1">Timestamp</p>
-                <p className="text-sm text-slate-200">{new Date(activityDetail.timestamp).toLocaleString()}</p>
-              </div>
-              {activityDetail.tokens && (
-                <div>
-                  <p className="text-sm text-slate-400 mb-1">Tokens Used</p>
-                  <p className="text-sm text-slate-200">{activityDetail.tokens}</p>
-                </div>
-              )}
             </div>
           </div>
         </div>

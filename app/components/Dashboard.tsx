@@ -8,20 +8,40 @@ type Agent = {
   id: string
   name: string
   type: string
-  status: string
+  status: 'IDLE' | 'THINKING' | 'WORKING' | 'OFFLINE'
   isOnline: boolean
   tokensUsed: number
   tokensAvailable: number
   lastHeartbeat: string
+  timeInCurrentStatus?: number
   metadata?: any
   recentActivities?: any[]
   assignedTickets?: any[]
   statusHistory?: any[]
+  tokenStats?: {
+    recent: number
+    total: number
+    input: number
+    output: number
+    cacheHits: number
+  }
 }
 
 type Ticket = { id: string; title: string; status: string; priority: string; assigneeId?: string | null; dueDate?: string }
 
-type Activity = { id: string; agentId: string; type: string; message: string; timestamp: string; tokens?: number }
+type Activity = {
+  id: string
+  agentId: string
+  type: string
+  message: string
+  timestamp: string
+  tokens?: number
+  inputTokens?: number
+  outputTokens?: number
+  cacheHits?: number
+  toolName?: string
+  duration?: number
+}
 
 type Summary = {
   totalAgents: number
@@ -29,6 +49,7 @@ type Summary = {
   offlineAgents: number
   totalTokensUsed: number
   systemHealth: string
+  statusBreakdown?: Record<string, number>
 }
 
 export function Dashboard() {
@@ -61,18 +82,41 @@ export function Dashboard() {
   }, [])
 
   const stats = useMemo(() => {
-    if (!summary) return { total: 0, active: 0, idle: 0, offline: 0, done: 0, health: 'Unknown', tokenUsage: 0 }
+    if (!summary) return {
+      total: 0,
+      idle: 0,
+      thinking: 0,
+      working: 0,
+      offline: 0,
+      done: 0,
+      health: 'Unknown',
+      tokenUsage: 0
+    }
+
     const done = tickets.filter((t) => t.status === 'Done').length
+    const statusBreakdown = summary.statusBreakdown || {}
+
     return {
       total: summary.totalAgents,
-      active: summary.onlineAgents,
-      idle: 0,
-      offline: summary.offlineAgents,
+      idle: statusBreakdown['IDLE'] || 0,
+      thinking: statusBreakdown['THINKING'] || 0,
+      working: statusBreakdown['WORKING'] || 0,
+      offline: statusBreakdown['OFFLINE'] || summary.offlineAgents || 0,
       done,
       health: summary.systemHealth,
       tokenUsage: summary.totalTokensUsed,
     }
   }, [summary, tickets])
+
+  const getStatusIcon = (status: string) => {
+    switch (status) {
+      case 'IDLE': return '⏸️'
+      case 'THINKING': return '🧠'
+      case 'WORKING': return '⚡'
+      case 'OFFLINE': return '💤'
+      default: return '⚪'
+    }
+  }
 
   return (
     <main className="p-4 md:p-6 bg-slate-950 min-h-screen">
@@ -88,10 +132,17 @@ export function Dashboard() {
         )}
       </header>
 
+      {/* Stats Grid */}
       <section className="grid gap-3 md:grid-cols-4 mb-6">
         <div className="bg-slate-900 border border-slate-800 rounded-lg p-4">
           <p className="text-sm text-slate-400">Total Agents</p>
           <p className="text-2xl font-semibold text-white">{stats.total}</p>
+          <div className="flex gap-2 mt-2 text-xs">
+            {stats.idle > 0 && <span className="text-emerald-400">{getStatusIcon('IDLE')} {stats.idle}</span>}
+            {stats.thinking > 0 && <span className="text-amber-400">{getStatusIcon('THINKING')} {stats.thinking}</span>}
+            {stats.working > 0 && <span className="text-blue-400">{getStatusIcon('WORKING')} {stats.working}</span>}
+            {stats.offline > 0 && <span className="text-slate-400">{getStatusIcon('OFFLINE')} {stats.offline}</span>}
+          </div>
         </div>
         <div className="bg-slate-900 border border-slate-800 rounded-lg p-4">
           <p className="text-sm text-slate-400">Tickets</p>
@@ -111,12 +162,26 @@ export function Dashboard() {
         </div>
       </section>
 
+      {/* Main Content */}
       <section className="grid gap-4 lg:grid-cols-[1fr_360px]">
         <div>
-          <div className="mb-3 flex gap-2 text-xs">
-            <span className="rounded-full bg-emerald-500/20 px-3 py-1 text-emerald-300">Online {stats.active}</span>
-            <span className="rounded-full bg-red-500/20 px-3 py-1 text-red-300">Offline {stats.offline}</span>
+          {/* Status Legend */}
+          <div className="mb-3 flex gap-2 text-xs flex-wrap">
+            <span className="rounded-full bg-emerald-500/20 px-3 py-1 text-emerald-300 border border-emerald-500/30">
+              {getStatusIcon('IDLE')} IDLE
+            </span>
+            <span className="rounded-full bg-amber-500/20 px-3 py-1 text-amber-300 border border-amber-500/30">
+              {getStatusIcon('THINKING')} THINKING
+            </span>
+            <span className="rounded-full bg-blue-500/20 px-3 py-1 text-blue-300 border border-blue-500/30">
+              {getStatusIcon('WORKING')} WORKING
+            </span>
+            <span className="rounded-full bg-slate-500/20 px-3 py-1 text-slate-300 border border-slate-500/30">
+              {getStatusIcon('OFFLINE')} OFFLINE
+            </span>
           </div>
+
+          {/* Agent Grid */}
           <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
             {agents.map((agent) => (
               <AgentCard
@@ -131,6 +196,9 @@ export function Dashboard() {
                   tokensUsed: agent.tokensUsed,
                   tokensAvailable: agent.tokensAvailable,
                   lastHeartbeat: agent.lastHeartbeat,
+                  timeInCurrentStatus: agent.timeInCurrentStatus,
+                  statusHistory: agent.statusHistory,
+                  tokenStats: agent.tokenStats,
                   assignedTickets: tickets.filter((t) => t.assigneeId === agent.id).map((t) => ({
                     id: t.id,
                     title: t.title,
@@ -140,7 +208,14 @@ export function Dashboard() {
                   recentActivities: activities
                     .filter((a) => a.agentId === agent.id)
                     .slice(0, 5)
-                    .map((a) => ({ id: a.id, message: a.message, timestamp: a.timestamp, tokens: a.tokens })),
+                    .map((a) => ({
+                      id: a.id,
+                      message: a.message,
+                      timestamp: a.timestamp,
+                      tokens: a.tokens,
+                      inputTokens: a.inputTokens,
+                      outputTokens: a.outputTokens,
+                    })),
                 }}
               />
             ))}

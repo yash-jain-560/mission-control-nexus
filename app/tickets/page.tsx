@@ -3,6 +3,8 @@
 import { useState, useEffect, useMemo } from 'react'
 import Link from 'next/link'
 import { Kanban } from '@/app/components/Kanban'
+import { TicketDetailModal } from '@/app/components/TicketDetailModal'
+import { formatRelativeTime } from '@/lib/utils'
 
 type Ticket = {
   id: string
@@ -13,6 +15,7 @@ type Ticket = {
   assigneeId?: string | null
   dueDate?: string
   createdAt: string
+  updatedAt: string
 }
 
 type Agent = {
@@ -34,9 +37,13 @@ export default function TicketsPage() {
   const [filterStatus, setFilterStatus] = useState<string>('')
   const [filterPriority, setFilterPriority] = useState<string>('')
   const [filterAssignee, setFilterAssignee] = useState<string>('')
+  const [viewMode, setViewMode] = useState<'list' | 'kanban'>('list')
+  const [selectedTicketId, setSelectedTicketId] = useState<string | null>(null)
   const [newTicketTitle, setNewTicketTitle] = useState('')
   const [newTicketPriority, setNewTicketPriority] = useState('MEDIUM')
   const [showNewTicketForm, setShowNewTicketForm] = useState(false)
+  const [sortBy, setSortBy] = useState<'createdAt' | 'priority' | 'status'>('createdAt')
+  const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('desc')
 
   // Fetch data
   useEffect(() => {
@@ -54,7 +61,7 @@ export default function TicketsPage() {
 
       if (agentsRes.ok) {
         const data = await agentsRes.json()
-        setAgents(data.agents)
+        setAgents(data.agents.map((a: any) => ({ id: a.id, name: a.name })))
       }
     }
 
@@ -77,13 +84,33 @@ export default function TicketsPage() {
   }, [])
 
   const filteredTickets = useMemo(() => {
-    return tickets.filter((t) => {
+    let filtered = tickets.filter((t) => {
       if (filterStatus && t.status !== filterStatus) return false
       if (filterPriority && t.priority !== filterPriority) return false
       if (filterAssignee && t.assigneeId !== filterAssignee) return false
       return true
     })
-  }, [tickets, filterStatus, filterPriority, filterAssignee])
+
+    // Sort
+    filtered = [...filtered].sort((a, b) => {
+      let comparison = 0
+      switch (sortBy) {
+        case 'createdAt':
+          comparison = new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()
+          break
+        case 'priority':
+          const priorityOrder = { CRITICAL: 4, HIGH: 3, MEDIUM: 2, LOW: 1 }
+          comparison = (priorityOrder[a.priority as keyof typeof priorityOrder] || 0) - (priorityOrder[b.priority as keyof typeof priorityOrder] || 0)
+          break
+        case 'status':
+          comparison = a.status.localeCompare(b.status)
+          break
+      }
+      return sortOrder === 'asc' ? comparison : -comparison
+    })
+
+    return filtered
+  }, [tickets, filterStatus, filterPriority, filterAssignee, sortBy, sortOrder])
 
   const handleCreateTicket = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -139,6 +166,12 @@ export default function TicketsPage() {
     }
   }
 
+  const getAssigneeName = (id?: string | null) => {
+    if (!id) return 'Unassigned'
+    const agent = agents.find(a => a.id === id)
+    return agent?.name || id
+  }
+
   return (
     <main className="p-4 md:p-6 bg-slate-950 min-h-screen">
       <header className="mb-6">
@@ -147,12 +180,33 @@ export default function TicketsPage() {
             <h1 className="text-3xl font-bold text-white">Tickets</h1>
             <p className="text-slate-400 mt-1">Manage and track all tickets</p>
           </div>
-          <button
-            onClick={() => setShowNewTicketForm(!showNewTicketForm)}
-            className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-semibold transition-colors"
-          >
-            + New Ticket
-          </button>
+          <div className="flex items-center gap-3">
+            {/* View Toggle */}
+            <div className="flex bg-slate-900 rounded-lg border border-slate-800 p-1">
+              <button
+                onClick={() => setViewMode('list')}
+                className={`px-3 py-1.5 text-sm rounded transition-colors ${
+                  viewMode === 'list' ? 'bg-slate-700 text-white' : 'text-slate-400 hover:text-white'
+                }`}
+              >
+                List
+              </button>
+              <button
+                onClick={() => setViewMode('kanban')}
+                className={`px-3 py-1.5 text-sm rounded transition-colors ${
+                  viewMode === 'kanban' ? 'bg-slate-700 text-white' : 'text-slate-400 hover:text-white'
+                }`}
+              >
+                Kanban
+              </button>
+            </div>
+            <button
+              onClick={() => setShowNewTicketForm(!showNewTicketForm)}
+              className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-semibold transition-colors"
+            >
+              + New Ticket
+            </button>
+          </div>
         </div>
 
         {/* Create Ticket Form */}
@@ -232,7 +286,7 @@ export default function TicketsPage() {
         )}
 
         {/* Filters */}
-        <div className="flex gap-3 flex-wrap mb-6">
+        <div className="flex gap-3 flex-wrap mb-6 items-center">
           <select
             value={filterStatus}
             onChange={(e) => setFilterStatus(e.target.value)}
@@ -271,6 +325,27 @@ export default function TicketsPage() {
             ))}
           </select>
 
+          {/* Sort Controls */}
+          {viewMode === 'list' && (
+            <>
+              <select
+                value={sortBy}
+                onChange={(e) => setSortBy(e.target.value as any)}
+                className="px-3 py-2 bg-slate-800 border border-slate-700 rounded text-white text-sm focus:border-blue-500 outline-none"
+              >
+                <option value="createdAt">Sort by Date</option>
+                <option value="priority">Sort by Priority</option>
+                <option value="status">Sort by Status</option>
+              </select>
+              <button
+                onClick={() => setSortOrder(sortOrder === 'asc' ? 'desc' : 'asc')}
+                className="px-3 py-2 bg-slate-800 border border-slate-700 rounded text-white text-sm hover:bg-slate-700"
+              >
+                {sortOrder === 'asc' ? '↑' : '↓'}
+              </button>
+            </>
+          )}
+
           {(filterStatus || filterPriority || filterAssignee) && (
             <button
               onClick={() => {
@@ -283,44 +358,80 @@ export default function TicketsPage() {
               Clear Filters
             </button>
           )}
+
+          <span className="ml-auto text-sm text-slate-500">
+            Showing {filteredTickets.length} of {tickets.length} tickets
+          </span>
         </div>
       </header>
 
       {/* Tickets View */}
-      <div className="grid gap-3">
-        {filteredTickets.length === 0 ? (
-          <div className="bg-slate-900 border border-slate-800 rounded-lg p-8 text-center">
-            <p className="text-slate-400">No tickets match your filters</p>
+      {viewMode === 'kanban' ? (
+        <div className="bg-slate-950">
+          <Kanban />
+        </div>
+      ) : (
+        <div className="bg-slate-900 border border-slate-800 rounded-lg overflow-hidden">
+          {/* Table Header */}
+          <div className="grid grid-cols-[2fr_1fr_1fr_1fr_1fr] gap-4 px-4 py-3 bg-slate-800/50 border-b border-slate-800 text-xs font-semibold text-slate-400 uppercase">
+            <span>Title</span>
+            <span>Status</span>
+            <span>Priority</span>
+            <span>Assignee</span>
+            <span>Created</span>
           </div>
-        ) : (
-          filteredTickets.map((ticket) => (
-            <div
-              key={ticket.id}
-              className="bg-slate-900 border border-slate-800 rounded-lg p-4 hover:border-slate-700 transition-colors"
-            >
-              <div className="flex items-start justify-between gap-4">
-                <div className="flex-1">
-                  <h3 className="text-base font-semibold text-white">{ticket.title}</h3>
-                  {ticket.description && (
-                    <p className="text-sm text-slate-400 mt-1 line-clamp-2">{ticket.description}</p>
-                  )}
-                </div>
-                <div className="flex gap-2">
-                  <span className={`text-xs px-3 py-1 rounded font-semibold ${getPriorityColor(ticket.priority)}`}>
-                    {ticket.priority}
-                  </span>
-                  <span className={`text-xs px-3 py-1 rounded ${getStatusColor(ticket.status)}`}>
-                    {ticket.status}
-                  </span>
-                </div>
-              </div>
-              {ticket.dueDate && (
-                <p className="text-xs text-slate-500 mt-3">Due: {new Date(ticket.dueDate).toLocaleDateString()}</p>
-              )}
+
+          {/* Table Body */}
+          {filteredTickets.length === 0 ? (
+            <div className="p-8 text-center">
+              <p className="text-slate-400">No tickets match your filters</p>
             </div>
-          ))
-        )}
-      </div>
+          ) : (
+            <div className="divide-y divide-slate-800">
+              {filteredTickets.map((ticket) => (
+                <button
+                  key={ticket.id}
+                  onClick={() => setSelectedTicketId(ticket.id)}
+                  className="w-full grid grid-cols-[2fr_1fr_1fr_1fr_1fr] gap-4 px-4 py-3 text-left hover:bg-slate-800/30 transition-colors"
+                >
+                  <div className="min-w-0">
+                    <p className="text-sm font-medium text-white truncate">{ticket.title}</p>
+                    {ticket.description && (
+                      <p className="text-xs text-slate-500 truncate">{ticket.description}</p>
+                    )}
+                  </div>
+                  <div>
+                    <span className={`text-xs px-2 py-1 rounded ${getStatusColor(ticket.status)}`}>
+                      {ticket.status}
+                    </span>
+                  </div>
+                  <div>
+                    <span className={`text-xs px-2 py-1 rounded border ${getPriorityColor(ticket.priority)}`}>
+                      {ticket.priority}
+                    </span>
+                  </div>
+                  <div>
+                    <span className="text-sm text-slate-300">{getAssigneeName(ticket.assigneeId)}</span>
+                  </div>
+                  <div>
+                    <span className="text-xs text-slate-500">
+                      {formatRelativeTime(ticket.createdAt)}
+                    </span>
+                  </div>
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Ticket Detail Modal */}
+      {selectedTicketId && (
+        <TicketDetailModal
+          ticketId={selectedTicketId}
+          onClose={() => setSelectedTicketId(null)}
+        />
+      )}
     </main>
   )
 }
