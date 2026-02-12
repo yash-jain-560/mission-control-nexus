@@ -3,6 +3,8 @@ import { PrismaClient } from '@prisma/client';
 
 const prisma = new PrismaClient();
 
+export const dynamic = 'force-dynamic';
+
 // POST /api/tickets - Create a new ticket
 export async function POST(request: NextRequest) {
   try {
