@@ -1,0 +1,100 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// Agent Status and Monitoring
+model Agent {
+  id            String   @id @default(cuid())
+  agentId       String   @unique
+  name          String
+  type          String   // 'worker', 'coordinator', 'monitor', etc.
+  status        String   @default("OFFLINE") // ONLINE, OFFLINE, IDLE, BUSY, ERROR, UNKNOWN
+  
+  // Health metrics
+  health        Json     @default("{\"status\": \"unknown\", \"lastCheck\": null, \"metrics\": {}}")
+  
+  // Timestamps
+  lastHeartbeat DateTime @default(now())
+  lastActive    DateTime @default(now())
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+  
+  // Metadata
+  metadata      Json     @default("{}")
+  
+  // Relations
+  heartbeats    Heartbeat[]
+  history       AgentHistory[]
+
+  @@index([agentId])
+  @@index([status])
+  @@index([lastHeartbeat])
+  @@index([lastActive])
+}
+
+// Agent Heartbeat History
+model Heartbeat {
+  id        String   @id @default(cuid())
+  agentId   String
+  timestamp DateTime @default(now())
+  status    String
+  health    Json     @default("{}")
+  metadata  Json     @default("{}")
+  
+  agent     Agent    @relation(fields: [agentId], references: [agentId], onDelete: Cascade)
+  
+  @@index([agentId])
+  @@index([timestamp])
+}
+
+// Agent Status Change History
+model AgentHistory {
+  id         String   @id @default(cuid())
+  agentId    String
+  changeType String   // STATUS_CHANGE, HEALTH_UPDATE, HEARTBEAT, ERROR
+  fromValue  Json?
+  toValue    Json?
+  timestamp  DateTime @default(now())
+  metadata   Json     @default("{}")
+  
+  agent      Agent    @relation(fields: [agentId], references: [agentId], onDelete: Cascade)
+  
+  @@index([agentId])
+  @@index([timestamp])
+  @@index([changeType])
+}
+
+// Kanban Tickets
+model Ticket {
+  id          String   @id @default(cuid())
+  title       String
+  description String?
+  status      String   @default("Backlog") // Backlog, Assigned, InProgress, Review, Done
+  priority    String   @default("MEDIUM") // LOW, MEDIUM, HIGH, URGENT, CRITICAL
+  
+  // Assignment
+  assigneeId  String?
+  reporterId  String   @default("system")
+  
+  // Dates
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  dueDate     DateTime?
+  
+  // Metadata
+  tags        String[] @default([])
+  metadata    Json     @default("{}")
+  
+  @@index([status])
+  @@index([priority])
+  @@index([assigneeId])
+  @@index([createdAt])
+}

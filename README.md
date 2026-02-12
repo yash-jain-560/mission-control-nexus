@@ -1,178 +1,304 @@
 # Mission Control Nexus
 
-A centralized command and control platform for managing, monitoring, and orchestrating autonomous AI agents with real-time status tracking, ticket lifecycle management, automated PRD generation, and comprehensive activity logging.
+Multi-agent monitoring & Kanban ticket management platform. Built with Next.js, Prisma, and PostgreSQL.
 
-## Project Vision
+## Features
 
-Mission Control Nexus is designed to provide unified oversight and coordination for multiple AI agents (Main, Work, Personal) working on complex tasks. It centralizes assignment, oversight, progress tracking, and documentation generation to reduce manual decision-making and enable scalable, autonomous workflows.
+✅ **Agent Registration & Monitoring**
+- Real-time heartbeat tracking
+- Agent status management (idle, working, thinking, executing)
+- Token usage tracking
+- Sub-agent relationship tracking
 
-## Key Features
+✅ **Kanban Ticket Management**
+- Drag-and-drop state transitions: backlog → assigned → in_progress → review → done
+- Automatic state validation (can't skip states)
+- Ticket filtering by status and agent
+- Priority levels: low, medium, high
 
-- **Real-time Agent Status Monitoring:** Agents report their state (thinking, working, executing, idle) with heartbeat signals
-- **Kanban Ticket Management:** Full lifecycle tracking (Backlog → Assigned → InProgress → Review → Done → Failed)
-- **Automated Ticket Creation:** Tickets auto-generate when tasks fail or require review
-- **Activity Logging:** Comprehensive, immutable logs of all agent actions and status changes
-- **PRD Auto-Generation:** Product Requirements Documents generated from ticket activities
-- **Documentation System:** Auto-generated docs for tickets, PRDs, and architectural decisions
-- **Memory Persistence:** Durable logs linked to tickets for traceability and replay capability
+✅ **Activity Logging**
+- Automatic activity logs for all state changes
+- Searchable activity feed
+- Agent and ticket activity tracking
+
+✅ **System Monitoring**
+- Real-time system health check
+- Agent statistics
+- Ticket pipeline visibility
+- Token usage metrics
+
+## Tech Stack
+
+- **Frontend:** Next.js 14 (App Router)
+- **Backend:** Next.js API routes
+- **Database:** PostgreSQL (Neon/Supabase recommended)
+- **ORM:** Prisma
+- **Language:** TypeScript
+
+## Quick Start
+
+### Prerequisites
+- Node.js 18+
+- PostgreSQL 12+
+- npm or yarn
+
+### Local Development
+
+```bash
+# Install dependencies
+npm install
+
+# Set up environment
+cp .env.example .env.local
+# Edit .env.local and add your DATABASE_URL
+
+# Generate Prisma client
+npm run prisma:generate
+
+# Run migrations
+npm run prisma:migrate
+
+# Start development server
+npm run dev
+```
+
+Visit http://localhost:3000
+
+### Database Setup
+
+Using Neon (recommended for free tier):
+```bash
+# 1. Create account at https://neon.tech
+# 2. Create a new project
+# 3. Copy the connection string: postgresql://user:password@host/database
+# 4. Add to .env.local: DATABASE_URL="your_connection_string"
+```
+
+## API Endpoints
+
+### Agents
+
+**List all agents**
+```bash
+GET /api/agents
+```
+
+**Register new agent**
+```bash
+POST /api/agents
+Content-Type: application/json
+
+{
+  "name": "MyAgent",
+  "status": "idle",
+  "model": "gpt-4"
+}
+```
+
+**Get agent status**
+```bash
+GET /api/agents/:agentId/status
+```
+
+**Send heartbeat**
+```bash
+POST /api/agents/:agentId/heartbeat
+Content-Type: application/json
+
+{
+  "status": "working",
+  "tokenUsage": 1500,
+  "model": "gpt-4"
+}
+```
+
+### Tickets
+
+**List tickets**
+```bash
+GET /api/tickets?status=backlog&agentId=agent123
+```
+
+**Create ticket**
+```bash
+POST /api/tickets
+Content-Type: application/json
+
+{
+  "title": "Implement feature X",
+  "description": "Long description here",
+  "priority": "high",
+  "agentId": "agent123"
+}
+```
+
+**Get ticket details**
+```bash
+GET /api/tickets/:ticketId
+```
+
+**Update ticket (status, agent, etc.)**
+```bash
+PATCH /api/tickets/:ticketId
+Content-Type: application/json
+
+{
+  "status": "in_progress",
+  "agentId": "agent123"
+}
+```
+
+**Delete ticket**
+```bash
+DELETE /api/tickets/:ticketId
+```
+
+### Monitoring
+
+**System health & stats**
+```bash
+GET /api/monitor/status
+```
+
+Response:
+```json
+{
+  "success": true,
+  "data": {
+    "timestamp": "2024-02-12T11:30:00Z",
+    "agents": {
+      "total": 5,
+      "active": 4,
+      "activePercentage": 80
+    },
+    "tickets": {
+      "total": 12,
+      "byStatus": {
+        "backlog": 3,
+        "assigned": 2,
+        "in_progress": 4,
+        "review": 2,
+        "done": 1
+      }
+    },
+    "usage": {
+      "totalTokens": 50000
+    },
+    "system": {
+      "uptime": 3600,
+      "memory": {...}
+    }
+  }
+}
+```
+
+## State Transitions (Kanban)
+
+Valid ticket state transitions:
+
+- **backlog** → assigned, in_progress
+- **assigned** → in_progress, backlog
+- **in_progress** → review, assigned
+- **review** → done, in_progress
+- **done** → (no further transitions)
+
+## Deployment to Vercel
+
+### 1. Push to GitHub
+```bash
+git add .
+git commit -m "feat: Convert to Next.js with Kanban + Agent API"
+git push origin main
+```
+
+### 2. Set up Vercel
+
+```bash
+# Install Vercel CLI
+npm install -g vercel
+
+# Deploy
+vercel
+```
+
+Or connect your GitHub repo directly at https://vercel.com/import
+
+### 3. Environment Variables on Vercel
+
+Add these in Vercel project settings:
+
+```
+DATABASE_URL = postgresql://...
+NODE_ENV = production
+```
+
+### 4. Database Migration
+
+Run migrations on Vercel:
+
+```bash
+# Option 1: Via Vercel CLI
+vercel env pull
+npm run prisma:migrate
+
+# Option 2: In GitHub Actions (recommended)
+# Create .github/workflows/deploy.yml with prisma:migrate step
+```
+
+## Development
+
+### Generate Prisma Client
+```bash
+npm run prisma:generate
+```
+
+### View Database UI
+```bash
+npm run prisma:studio
+```
+
+### Build
+```bash
+npm run build
+```
+
+### Type Checking
+```bash
+npx tsc --noEmit
+```
 
 ## Project Structure
 
 ```
-mission-control-nexus/
-├── personal/                    # Personal agent workspace
-│   ├── requirement-analysis.md  # Project requirements & flow
-│   └── tickets.md              # Ticket definitions & lifecycle
-├── src/                         # Source code (TBD)
-│   ├── api/                    # REST API implementation
-│   ├── models/                 # Data models (Agent, Task, Ticket, LogEntry)
-│   ├── services/               # Business logic (orchestration, routing)
-│   └── utils/                  # Utilities (logging, memory, helpers)
-├── docs/                        # Generated documentation
-│   ├── api-reference.md        # API endpoint documentation
-│   ├── architecture.md         # System design and components
-│   └── prd-templates/          # PRD templates for future tickets
-├── tests/                       # Test suites
-├── .github/workflows/           # GitHub Actions CI/CD
-├── package.json                 # Node.js dependencies
-├── README.md                    # This file
-└── LICENSE                      # MIT License
+.
+├── app/
+│   ├── api/
+│   │   ├── agents/           # Agent endpoints
+│   │   ├── tickets/          # Ticket endpoints
+│   │   └── monitor/          # System monitoring
+│   ├── layout.tsx
+│   └── page.tsx
+├── prisma/
+│   ├── schema.prisma         # Database schema
+│   └── migrations/           # Database migrations
+└── package.json
 ```
 
-## Development Flow
+## Next Steps
 
-1. **Requirement Analysis** ✅ - Project vision and feature breakdown defined
-2. **Ticket Creation** ✅ - 6 core tickets created with clear AC
-3. **PRD Generation** ⏳ - Detailed PRDs being generated for each ticket
-4. **Agent Assignment** ⏳ - PRDs assigned to Work (Codex) or Personal (Claude) agents
-5. **Implementation** ⏳ - Agents implement assigned features
-6. **Documentation** ⏳ - Auto-generated docs for completed features
-7. **GitHub Push** ⏳ - Verified changes pushed to main branch
+- [ ] Add WebSocket for real-time updates
+- [ ] Build dashboard UI with React
+- [ ] Add authentication/authorization
+- [ ] Add activity timeline visualization
+- [ ] Add batch operations for tickets
+- [ ] Add agent SDK/npm package
+- [ ] Performance monitoring & logging
+- [ ] Rate limiting & caching
 
-## Ticket Summary
+## Support
 
-| Ticket | Title | Priority | Assigned to | Status |
-|--------|-------|----------|------------|--------|
-| 1 | Agent Status API | High | Work | Backlog |
-| 2 | Kanban Lifecycle | High | Work | Backlog |
-| 3 | Memory & Logging | High | Personal | Backlog |
-| 4 | PRD Generation | Medium | Personal | Backlog |
-| 5 | Documentation | Medium | Personal | Backlog |
-| 6 | GitHub CI/CD | Medium | Work | Backlog |
-
-## Getting Started
-
-### Prerequisites
-- Node.js 18+
-- npm or yarn
-- GitHub CLI (gh)
-- OpenClaw (agent orchestration)
-
-### Installation
-```bash
-git clone https://github.com/yash-jain-560/mission-control-nexus.git
-cd mission-control-nexus
-npm install
-```
-
-### Running the System
-```bash
-npm start
-```
-
-### Running Tests
-```bash
-npm test
-```
-
-## API Overview
-
-### Agent Management
-- `POST /api/v1/agents` - Register a new agent
-- `GET /api/v1/agents` - List all agents
-- `POST /api/v1/agents/{agent_id}/heartbeat` - Agent heartbeat/status update
-
-### Task & Ticket Management
-- `POST /api/v1/tasks` - Create a task
-- `GET /api/v1/tasks` - List tasks (with filtering)
-- `PUT /api/v1/tasks/{task_id}` - Update task status
-- `POST /api/v1/tickets` - Create ticket
-- `GET /api/v1/tickets` - List tickets
-
-### Monitoring
-- `GET /api/v1/monitor/agents` - Real-time agent status
-- `GET /api/v1/monitor/status` - System health
-
-### Memory & Logging
-- `POST /api/v1/memory` - Persist memory entry
-- `GET /api/v1/memory` - Retrieve memory logs
-
-See `docs/api-reference.md` for detailed API documentation.
-
-## Multi-Agent Architecture
-
-### Main Agent (Coordinator)
-- Orchestrates work between Work and Personal agents
-- Manages overall flow and integration
-- Makes assignment decisions
-
-### Work Agent (Codex CLI)
-- Focused on CLI and coding tasks
-- Implements API endpoints, controllers, and utilities
-- Handles GitHub integration and CI/CD
-
-### Personal Agent (Claude Opus)
-- Advanced reasoning and complex analysis
-- Generates PRDs, documentation, and reasoning artifacts
-- Manages memory persistence logic and decision-making
-
-## Monitoring & Heartbeat
-
-The system includes a proactive heartbeat mechanism that:
-- Scans for pending work every 5 minutes
-- Checks agent status and Git repo sync
-- Reports blockers and progress updates
-- Keeps the team informed without manual intervention
-
-## Memory & Logging
-
-All agent activities, status changes, and decisions are logged with:
-- Timestamps
-- Source agent ID
-- Associated task/ticket ID
-- Detailed context and metadata
-
-Memory logs can be replayed to reconstruct project state and audit history.
-
-## Contributing
-
-See `CONTRIBUTING.md` for guidelines on:
-- Code standards
-- Testing requirements
-- PR submission process
-- Agent integration guidelines
+For issues or questions, open an issue on GitHub or check the docs at https://docs.openclaw.ai
 
 ## License
 
-MIT License - see LICENSE file for details.
-
-## Support & Issues
-
-For questions, issues, or feature requests, please open a GitHub issue or contact the project maintainers.
-
-## Roadmap
-
-### Phase 1 (Current)
-- Core infrastructure (agent registration, task management, basic monitoring)
-
-### Phase 2
-- Advanced features (data aggregation, integration with external systems)
-
-### Phase 3
-- ML-driven optimization, advanced security, enterprise features
-
----
-
-**Last Updated:** 2026-02-12  
-**Repository:** https://github.com/yash-jain-560/mission-control-nexus  
-**Lead Agents:** Work (Codex), Personal (Claude Opus)
+MIT
