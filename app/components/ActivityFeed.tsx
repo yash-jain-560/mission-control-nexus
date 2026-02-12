@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import { formatRelativeTime } from '@/lib/utils';
 import { ActivityDetailModal } from './ActivityDetailModal';
 import { formatCost } from '@/lib/cost-calculator';
@@ -25,7 +25,11 @@ interface ActivityItem {
   apiStatusCode?: number;
   inputPrompt?: string;
   output?: string;
-  metadata?: any;
+  metadata?: {
+    isSystemActivity?: boolean;
+    collapsedByDefault?: boolean;
+    [key: string]: any;
+  };
 }
 
 interface ActivityFeedProps {
@@ -33,13 +37,37 @@ interface ActivityFeedProps {
   refreshInterval?: number;
   showFilters?: boolean;
   maxItems?: number;
-  ticketId?: string; // Filter by ticket
+  ticketId?: string;
 }
 
 // Truncate text to a certain length
 function truncateText(text: string, maxLength: number): string {
   if (!text || text.length <= maxLength) return text;
   return text.slice(0, maxLength).trim() + '...';
+}
+
+// Check if activity is a system activity
+function isSystemActivity(item: ActivityItem): boolean {
+  // Check metadata first
+  if (item.metadata?.isSystemActivity !== undefined) {
+    return item.metadata.isSystemActivity;
+  }
+  
+  // Check activity type
+  const systemTypes = ['api_call', 'system_event', 'heartbeat'];
+  const type = item.type || item.activityType || '';
+  if (systemTypes.includes(type)) return true;
+  
+  // Check endpoint
+  if (item.apiEndpoint) {
+    const systemEndpoints = ['/api/health', '/api/events', '/api/monitor'];
+    if (systemEndpoints.some(endpoint => item.apiEndpoint?.includes(endpoint))) return true;
+  }
+  
+  // Check if it's a GET request
+  if (item.apiMethod === 'GET') return true;
+  
+  return false;
 }
 
 export function ActivityFeed({ 
@@ -53,11 +81,13 @@ export function ActivityFeed({
   const [selectedActivity, setSelectedActivity] = useState<string | null>(null);
   const [expandedActivities, setExpandedActivities] = useState<Set<string>>(new Set());
   const [filter, setFilter] = useState<string>('all');
+  const [showSystemActivities, setShowSystemActivities] = useState(false);
   const [isLive, setIsLive] = useState(true);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [lastFetchTime, setLastFetchTime] = useState<Date>(new Date());
 
-  // Fetch activities from API
+  // Fetch activities from API - memoized to prevent re-renders
   const fetchActivities = useCallback(async () => {
     if (!isLive && initialItems) return;
     
@@ -76,6 +106,7 @@ export function ActivityFeed({
       
       const data = await response.json();
       setItems(data.activities || []);
+      setLastFetchTime(new Date());
       setError(null);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to fetch');
@@ -84,7 +115,7 @@ export function ActivityFeed({
     }
   }, [filter, isLive, maxItems, initialItems, ticketId]);
 
-  // Auto-refresh when live
+  // Auto-refresh when live - with proper cleanup
   useEffect(() => {
     if (!isLive) return;
     
@@ -93,12 +124,12 @@ export function ActivityFeed({
     return () => clearInterval(interval);
   }, [fetchActivities, isLive, refreshInterval]);
 
-  // Use initial items if provided
+  // Use initial items if provided - only on mount
   useEffect(() => {
     if (initialItems) {
       setItems(initialItems);
     }
-  }, [initialItems]);
+  }, []);
 
   // Toggle expanded state for an activity
   const toggleExpanded = (activityId: string) => {
@@ -170,7 +201,10 @@ export function ActivityFeed({
     }
   };
 
-  const getActivityBgColor = (type: string) => {
+  const getActivityBgColor = (type: string, isSystem: boolean) => {
+    if (isSystem) {
+      return 'bg-slate-900/30 border-slate-800/50';
+    }
     switch (type) {
       case 'error':
       case 'agent_error':
@@ -213,12 +247,32 @@ export function ActivityFeed({
     };
   };
 
-  const filteredItems = filter === 'all' 
-    ? items 
-    : items.filter(item => item.type === filter || item.activityType === filter);
+  // Memoized filtered items to prevent re-computation
+  const filteredItems = useMemo(() => {
+    let result = items;
+    
+    // Filter by type
+    if (filter !== 'all') {
+      result = result.filter(item => item.type === filter || item.activityType === filter);
+    }
+    
+    // Filter out system activities if not showing them
+    if (!showSystemActivities) {
+      result = result.filter(item => !isSystemActivity(item));
+    }
+    
+    return result;
+  }, [items, filter, showSystemActivities]);
 
-  // Get unique activity types for filter
-  const activityTypes = ['all', ...new Set(items.map(item => item.type || item.activityType || 'unknown'))];
+  // Get unique activity types for filter (non-system types)
+  const activityTypes = useMemo(() => {
+    const types = new Set<string>();
+    items.forEach(item => {
+      const type = item.type || item.activityType || 'unknown';
+      types.add(type);
+    });
+    return ['all', ...Array.from(types)];
+  }, [items]);
 
   return (
     <>
@@ -255,19 +309,30 @@ export function ActivityFeed({
 
         {/* Filters */}
         {showFilters && (
-          <div className="mb-3">
+          <div className="mb-3 space-y-2">
             <select
               value={filter}
               onChange={(e) => setFilter(e.target.value)}
-              className="w-full text-xs bg-slate-800 border border-slate-700 rounded px-2 py-1 text-slate-300 focus:outline-none focus:border-blue-500"
+              className="w-full text-xs bg-slate-800 border border-slate-700 rounded px-2 py-1.5 text-slate-300 focus:outline-none focus:border-blue-500"
             >
-              <option value="all">All Activities</option>
+              <option value="all">All Types</option>
               {activityTypes.filter(t => t !== 'all').map(type => (
                 <option key={type} value={type}>
                   {type.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase())}
                 </option>
               ))}
             </select>
+            
+            {/* System Activities Toggle */}
+            <label className="flex items-center gap-2 text-xs cursor-pointer">
+              <input
+                type="checkbox"
+                checked={showSystemActivities}
+                onChange={(e) => setShowSystemActivities(e.target.checked)}
+                className="rounded border-slate-600 text-blue-600 focus:ring-blue-500"
+              />
+              <span className="text-slate-400">Show System Activities</span>
+            </label>
           </div>
         )}
 
@@ -291,7 +356,7 @@ export function ActivityFeed({
           </div>
         )}
 
-        {/* Activity List */}
+        {/* Activity List - Virtualized-like rendering */}
         <div className="flex-1 overflow-auto space-y-2 pr-1 min-h-0">
           {filteredItems.length === 0 ? (
             <div className="text-center py-8">
@@ -311,19 +376,18 @@ export function ActivityFeed({
               const hasError = item.type === 'error' || item.type === 'agent_error' || (item.apiStatusCode !== undefined && item.apiStatusCode >= 400);
               const isExpanded = expandedActivities.has(item.id);
               const { text: displayText, needsExpansion } = getDisplayContent(item, isExpanded);
+              const isSystem = isSystemActivity(item);
               
               return (
                 <div
                   key={item.id}
-                  className={`w-full text-left rounded-lg border p-3 hover:border-blue-500/50 transition-colors ${
-                    getActivityBgColor(item.type || item.activityType || '')
-                  }`}
+                  onClick={() => setSelectedActivity(item.id)}
+                  className={`w-full text-left rounded-lg border p-3 hover:border-blue-500/50 transition-colors cursor-pointer ${
+                    getActivityBgColor(item.type || item.activityType || '', isSystem)
+                  } ${isSystem ? 'opacity-70' : ''}`}
                 >
                   {/* Header row */}
-                  <button
-                    onClick={() => setSelectedActivity(item.id)}
-                    className="w-full flex items-center gap-2 mb-1"
-                  >
+                  <div className="w-full flex items-center gap-2 mb-1">
                     <span className="text-sm">{getActivityIcon(item.type || item.activityType || '')}</span>
                     <span
                       className={`h-2 w-2 rounded-full ${getActivityColor(item.type || item.activityType || '')}`}
@@ -331,10 +395,15 @@ export function ActivityFeed({
                     <span className="text-xs uppercase text-slate-400 flex-1 truncate">
                       {item.type || item.activityType}
                     </span>
+                    {isSystem && (
+                      <span className="text-[10px] px-1.5 py-0.5 bg-slate-800 rounded text-slate-500">
+                        system
+                      </span>
+                    )}
                     <span className="text-xs text-slate-500">
                       {formatRelativeTime(item.timestamp)}
                     </span>
-                  </button>
+                  </div>
 
                   {/* Description with Read More */}
                   <div className={`text-sm ${hasError ? 'text-red-300' : 'text-slate-200'}`}>
@@ -410,28 +479,6 @@ export function ActivityFeed({
                       Duration: {(item.duration / 1000).toFixed(2)}s
                     </p>
                   )}
-
-                  {/* Input/Output Preview (when expanded) */}
-                  {isExpanded && (item.inputPrompt || item.output) && (
-                    <div className="mt-3 pt-3 border-t border-slate-700 space-y-2">
-                      {item.inputPrompt && (
-                        <div>
-                          <p className="text-xs text-slate-500 mb-1">Input:</p>
-                          <p className="text-xs text-slate-400 line-clamp-4 font-mono bg-slate-800/50 p-2 rounded">
-                            {item.inputPrompt}
-                          </p>
-                        </div>
-                      )}
-                      {item.output && (
-                        <div>
-                          <p className="text-xs text-slate-500 mb-1">Output:</p>
-                          <p className="text-xs text-slate-400 line-clamp-4 font-mono bg-slate-800/50 p-2 rounded">
-                            {item.output}
-                          </p>
-                        </div>
-                      )}
-                    </div>
-                  )}
                 </div>
               );
             })
@@ -440,13 +487,18 @@ export function ActivityFeed({
 
         {/* Footer */}
         <div className="mt-3 pt-3 border-t border-slate-800 flex justify-between items-center">
-          <button
-            onClick={fetchActivities}
-            disabled={isLoading}
-            className="text-xs text-slate-500 hover:text-slate-300 disabled:opacity-50"
-          >
-            {isLoading ? 'Refreshing...' : 'Refresh'}
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={fetchActivities}
+              disabled={isLoading}
+              className="text-xs text-slate-500 hover:text-slate-300 disabled:opacity-50"
+            >
+              {isLoading ? 'Refreshing...' : 'Refresh'}
+            </button>
+            <span className="text-xs text-slate-600">
+              {lastFetchTime.toLocaleTimeString()}
+            </span>
+          </div>
           <a
             href="/activities"
             className="text-xs text-blue-400 hover:text-blue-300"

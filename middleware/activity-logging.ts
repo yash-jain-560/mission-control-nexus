@@ -1,6 +1,11 @@
 /**
  * Activity Logging Middleware
  * Wraps API handlers to automatically log all requests and responses
+ * 
+ * UPDATED:
+ * - GET requests are now filtered out from activity logging (only POST/PUT/DELETE/PATCH are logged)
+ * - Added system activity detection
+ * - Added collapsible logging support
  */
 
 import { NextRequest, NextResponse } from 'next/server';
@@ -10,6 +15,29 @@ import { calculateCost } from '@/lib/cost-calculator';
 
 // Store trace IDs for request correlation
 const requestTraceMap = new WeakMap<NextRequest, string>();
+
+// Methods that should be logged (skip GET/HEAD/OPTIONS)
+const LOGGED_METHODS = ['POST', 'PUT', 'DELETE', 'PATCH'];
+
+/**
+ * Check if a request method should be logged
+ */
+function shouldLogMethod(method: string): boolean {
+  return LOGGED_METHODS.includes(method.toUpperCase());
+}
+
+/**
+ * Check if activity is a system activity (vs user activity)
+ */
+function isSystemActivity(activityType: string, apiEndpoint?: string): boolean {
+  const systemTypes = ['system_event', 'heartbeat', 'api_call'];
+  const systemEndpoints = ['/api/health', '/api/events', '/api/monitor'];
+  
+  if (systemTypes.includes(activityType)) return true;
+  if (apiEndpoint && systemEndpoints.some(endpoint => apiEndpoint.includes(endpoint))) return true;
+  
+  return false;
+}
 
 /**
  * Middleware options
@@ -31,6 +59,8 @@ export interface ActivityLoggingOptions {
   activityType?: string;
   /** Model name for cost calculation */
   modelName?: string;
+  /** Force logging even for GET requests */
+  forceLog?: boolean;
 }
 
 /**
@@ -147,6 +177,8 @@ function filterHeaders(headers: Headers): Record<string, string> {
  *   // Your handler code
  * }, { agentId: 'my-agent' });
  * ```
+ * 
+ * NOTE: By default, GET requests are NOT logged. Use forceLog: true to override.
  */
 export function withActivityLogging<T extends (req: NextRequest, ...args: any[]) => Promise<NextResponse>>(
   handler: T,
@@ -157,6 +189,12 @@ export function withActivityLogging<T extends (req: NextRequest, ...args: any[])
     const traceId = getOrCreateTraceId(req);
     const agentId = extractAgentId(req, options);
     const url = new URL(req.url);
+    const method = req.method;
+    
+    // Skip logging for GET/HEAD/OPTIONS unless forceLog is true
+    if (!shouldLogMethod(method) && !options?.forceLog) {
+      return handler(req, ...args);
+    }
     
     // Get request details
     const body = options?.includeBody !== false 
@@ -200,10 +238,14 @@ export function withActivityLogging<T extends (req: NextRequest, ...args: any[])
         cost = calculateCost(inputTokens, outputTokens, options.modelName);
       }
       
+      // Determine if this is a system activity
+      const activityType = options?.activityType || ACTIVITY_TYPES.API_CALL;
+      const isSystem = isSystemActivity(activityType, url.pathname);
+      
       // Log the completed activity
       const activity = await logActivity({
         agentId,
-        activityType: options?.activityType || ACTIVITY_TYPES.API_CALL,
+        activityType,
         description: `${req.method} ${url.pathname} → ${response.status}`,
         inputPrompt,
         output,
@@ -234,6 +276,8 @@ export function withActivityLogging<T extends (req: NextRequest, ...args: any[])
         metadata: {
           cost,
           queryParams: Object.fromEntries(url.searchParams),
+          isSystemActivity: isSystem,
+          collapsedByDefault: isSystem, // System activities are collapsed by default
         },
       });
       
@@ -262,9 +306,12 @@ export function withActivityLogging<T extends (req: NextRequest, ...args: any[])
       const inputTokens = calculateTokens(inputPrompt);
       const outputTokens = calculateTokens(errorOutput);
       
+      const activityType = ACTIVITY_TYPES.AGENT_ERROR;
+      const isSystem = isSystemActivity(activityType, url.pathname);
+      
       await logActivity({
         agentId,
-        activityType: ACTIVITY_TYPES.AGENT_ERROR,
+        activityType,
         description: `Error in ${req.method} ${url.pathname}: ${error instanceof Error ? error.message : String(error)}`,
         inputPrompt,
         output: errorOutput,
@@ -290,6 +337,10 @@ export function withActivityLogging<T extends (req: NextRequest, ...args: any[])
         parentActivityId: options?.parentActivityId,
         traceId,
         modelName: options?.modelName,
+        metadata: {
+          isSystemActivity: isSystem,
+          collapsedByDefault: isSystem,
+        },
       });
       
       throw error;
@@ -320,6 +371,10 @@ export function createOperationLogger(
         activityType: ACTIVITY_TYPES.SYSTEM_EVENT,
         description: `Operation: ${operation}`,
         duration,
+        metadata: {
+          isSystemActivity: true,
+          collapsedByDefault: true,
+        },
         ...defaultOptions,
         ...options,
       });
@@ -334,6 +389,10 @@ export function createOperationLogger(
         description: `Operation failed: ${operation} - ${error instanceof Error ? error.message : String(error)}`,
         duration,
         output: JSON.stringify({ error: String(error) }),
+        metadata: {
+          isSystemActivity: true,
+          collapsedByDefault: true,
+        },
         ...defaultOptions,
         ...options,
       });
@@ -350,15 +409,19 @@ export function createOperationLogger(
 export async function activityLoggingMiddleware(
   req: NextRequest,
   options?: ActivityLoggingOptions
-): Promise<{ traceId: string; agentId: string }> {
+): Promise<{ traceId: string; agentId: string; shouldLog: boolean }> {
   const traceId = getOrCreateTraceId(req);
   const agentId = extractAgentId(req, options);
+  const shouldLog = shouldLogMethod(req.method) || options?.forceLog === true;
   
-  return { traceId, agentId };
+  return { traceId, agentId, shouldLog };
 }
 
 export default {
   withActivityLogging,
   createOperationLogger,
   activityLoggingMiddleware,
+  shouldLogMethod,
+  isSystemActivity,
+  LOGGED_METHODS,
 };
