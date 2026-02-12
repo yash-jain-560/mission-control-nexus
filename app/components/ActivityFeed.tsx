@@ -4,9 +4,12 @@ import { formatRelativeTime } from '@/lib/utils'
 
 type ActivityItem = {
   id: string
-  type: 'agent' | 'ticket' | 'system'
-  message: string
+  agentId?: string
+  type: string
+  message?: string
+  description?: string
   timestamp: string
+  tokens?: number
 }
 
 export function ActivityFeed({ items }: { items: ActivityItem[] }) {
@@ -25,13 +28,14 @@ export function ActivityFeed({ items }: { items: ActivityItem[] }) {
               <div className="flex items-center gap-2 mb-1">
                 <span
                   className={`h-2 w-2 rounded-full ${
-                    item.type === 'agent' ? 'bg-emerald-400' : item.type === 'ticket' ? 'bg-blue-400' : 'bg-amber-400'
+                    item.type === 'agent_turn' || item.type === 'tool_call' ? 'bg-emerald-400' : item.type === 'completion' ? 'bg-blue-400' : 'bg-amber-400'
                   }`}
                 />
                 <span className="text-xs uppercase text-slate-400">{item.type}</span>
                 <span className="ml-auto text-xs text-slate-500">{formatRelativeTime(item.timestamp)}</span>
               </div>
-              <p className="text-sm text-slate-200">{item.message}</p>
+              <p className="text-sm text-slate-200">{item.message || item.description}</p>
+              {item.tokens && <p className="text-xs text-slate-400 mt-1">Tokens: {item.tokens}</p>}
             </div>
           ))
         )}

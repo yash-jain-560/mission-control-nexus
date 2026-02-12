@@ -4,35 +4,41 @@ import { useEffect, useMemo, useState } from 'react'
 import { AgentCard } from '@/app/components/AgentCard'
 import { ActivityFeed } from '@/app/components/ActivityFeed'
 
-type AgentApi = {
+type Agent = {
   id: string
-  agentId: string
   name: string
   type: string
   status: string
-  metadata?: { model?: string; tokenUsage?: number }
+  isOnline: boolean
+  tokensUsed: number
+  tokensAvailable: number
   lastHeartbeat: string
+  metadata?: any
+  recentActivities?: any[]
+  assignedTickets?: any[]
+  statusHistory?: any[]
 }
 
-type Ticket = { id: string; title: string; status: string; assigneeId?: string | null }
+type Ticket = { id: string; title: string; status: string; priority: string; assigneeId?: string | null; dueDate?: string }
 
-type Activity = { id: string; type: 'agent' | 'ticket' | 'system'; message: string; timestamp: string }
+type Activity = { id: string; agentId: string; type: string; message: string; timestamp: string; tokens?: number }
+
+type Summary = {
+  totalAgents: number
+  onlineAgents: number
+  offlineAgents: number
+  totalTokensUsed: number
+  systemHealth: string
+}
 
 export function Dashboard() {
-  const [agents, setAgents] = useState<AgentApi[]>([])
+  const [agents, setAgents] = useState<Agent[]>([])
   const [tickets, setTickets] = useState<Ticket[]>([])
   const [activities, setActivities] = useState<Activity[]>([])
-
-  const load = async () => {
-    const [aRes, tRes] = await Promise.all([fetch('/api/agents'), fetch('/api/tickets')])
-    const aJson = await aRes.json()
-    const tJson = await tRes.json()
-    setAgents(aJson.agents || [])
-    setTickets(tJson.tickets || [])
-  }
+  const [summary, setSummary] = useState<Summary | null>(null)
+  const [lastUpdate, setLastUpdate] = useState<Date | null>(null)
 
   useEffect(() => {
-    load().catch(() => undefined)
     const evt = new EventSource('/api/events')
     evt.onmessage = (e) => {
       try {
@@ -41,67 +47,100 @@ export function Dashboard() {
           setAgents(payload.agents || [])
           setTickets(payload.tickets || [])
           setActivities(payload.activities || [])
-        }
-        if (payload.type === 'activity' && payload.activity) {
-          setActivities((prev) => [payload.activity, ...prev].slice(0, 40))
+          setSummary(payload.summary || null)
+          setLastUpdate(new Date())
         }
       } catch {
         // noop
       }
     }
+    evt.onerror = () => {
+      evt.close()
+    }
     return () => evt.close()
   }, [])
 
-  const summary = useMemo(() => {
-    const total = agents.length
-    const active = agents.filter((a) => ['ONLINE', 'BUSY', 'WORKING', 'ACTIVE'].includes(a.status.toUpperCase())).length
-    const idle = agents.filter((a) => a.status.toUpperCase().includes('IDLE')).length
-    const offline = total - active - idle
+  const stats = useMemo(() => {
+    if (!summary) return { total: 0, active: 0, idle: 0, offline: 0, done: 0, health: 'Unknown', tokenUsage: 0 }
     const done = tickets.filter((t) => t.status === 'Done').length
-    const health = total === 0 ? 'Unknown' : offline > total / 2 ? 'Degraded' : 'Healthy'
-    const tokenUsage = agents.reduce((acc, a) => acc + (Number(a.metadata?.tokenUsage) || 0), 0)
-    return { total, active, idle, offline, done, health, tokenUsage }
-  }, [agents, tickets])
+    return {
+      total: summary.totalAgents,
+      active: summary.onlineAgents,
+      idle: 0,
+      offline: summary.offlineAgents,
+      done,
+      health: summary.systemHealth,
+      tokenUsage: summary.totalTokensUsed,
+    }
+  }, [summary, tickets])
 
   return (
-    <main className="p-4 md:p-6">
+    <main className="p-4 md:p-6 bg-slate-950 min-h-screen">
       <header className="mb-6 flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
         <div>
-          <h1 className="text-2xl md:text-3xl font-bold">Mission Control Nexus</h1>
+          <h1 className="text-2xl md:text-3xl font-bold text-white">Mission Control Nexus</h1>
           <p className="text-slate-400">Real-time command center for agents and tickets</p>
         </div>
+        {lastUpdate && (
+          <div className="text-xs text-slate-500">
+            Updated: {lastUpdate.toLocaleTimeString()}
+          </div>
+        )}
       </header>
 
       <section className="grid gap-3 md:grid-cols-4 mb-6">
-        <div className="card p-4"><p className="text-sm text-slate-400">Total Agents</p><p className="text-2xl font-semibold">{summary.total}</p></div>
-        <div className="card p-4"><p className="text-sm text-slate-400">Tickets</p><p className="text-2xl font-semibold">{tickets.length} <span className="text-base text-slate-400">({summary.done} done)</span></p></div>
-        <div className="card p-4"><p className="text-sm text-slate-400">System Health</p><p className="text-2xl font-semibold">{summary.health}</p></div>
-        <div className="card p-4"><p className="text-sm text-slate-400">Total Tokens</p><p className="text-2xl font-semibold">{summary.tokenUsage.toLocaleString()}</p></div>
+        <div className="bg-slate-900 border border-slate-800 rounded-lg p-4">
+          <p className="text-sm text-slate-400">Total Agents</p>
+          <p className="text-2xl font-semibold text-white">{stats.total}</p>
+        </div>
+        <div className="bg-slate-900 border border-slate-800 rounded-lg p-4">
+          <p className="text-sm text-slate-400">Tickets</p>
+          <p className="text-2xl font-semibold text-white">
+            {tickets.length} <span className="text-base text-slate-400">({stats.done} done)</span>
+          </p>
+        </div>
+        <div className="bg-slate-900 border border-slate-800 rounded-lg p-4">
+          <p className="text-sm text-slate-400">System Health</p>
+          <p className={`text-2xl font-semibold ${stats.health === 'Healthy' ? 'text-emerald-400' : 'text-amber-400'}`}>
+            {stats.health}
+          </p>
+        </div>
+        <div className="bg-slate-900 border border-slate-800 rounded-lg p-4">
+          <p className="text-sm text-slate-400">Total Tokens</p>
+          <p className="text-2xl font-semibold text-white">{stats.tokenUsage.toLocaleString()}</p>
+        </div>
       </section>
 
       <section className="grid gap-4 lg:grid-cols-[1fr_360px]">
         <div>
           <div className="mb-3 flex gap-2 text-xs">
-            <span className="rounded-full bg-emerald-500/20 px-3 py-1 text-emerald-300">Active {summary.active}</span>
-            <span className="rounded-full bg-amber-500/20 px-3 py-1 text-amber-300">Idle {summary.idle}</span>
-            <span className="rounded-full bg-red-500/20 px-3 py-1 text-red-300">Offline {summary.offline}</span>
+            <span className="rounded-full bg-emerald-500/20 px-3 py-1 text-emerald-300">Online {stats.active}</span>
+            <span className="rounded-full bg-red-500/20 px-3 py-1 text-red-300">Offline {stats.offline}</span>
           </div>
           <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
-            {agents.map((a) => (
+            {agents.map((agent) => (
               <AgentCard
-                key={a.id}
+                key={agent.id}
                 agent={{
-                  id: a.id,
-                  agentId: a.agentId,
-                  name: a.name,
-                  type: a.type,
-                  status: a.status,
-                  model: a.metadata?.model,
-                  tokenUsage: a.metadata?.tokenUsage,
-                  lastHeartbeat: a.lastHeartbeat,
-                  assignedTickets: tickets.filter((t) => t.assigneeId === a.agentId).map((t) => ({ id: t.id, title: t.title, status: t.status })),
-                  recentActivities: activities.filter((x) => x.message.includes(a.name)).slice(0, 8).map((x) => ({ id: x.id, message: x.message, timestamp: x.timestamp })),
-                  statusHistory: activities.filter((x) => x.type === 'agent' && x.message.includes(a.name)).slice(0, 8).map((x) => ({ id: x.id, status: a.status, timestamp: x.timestamp })),
+                  id: agent.id,
+                  name: agent.name,
+                  type: agent.type,
+                  status: agent.status,
+                  isOnline: agent.isOnline,
+                  model: agent.metadata?.model,
+                  tokensUsed: agent.tokensUsed,
+                  tokensAvailable: agent.tokensAvailable,
+                  lastHeartbeat: agent.lastHeartbeat,
+                  assignedTickets: tickets.filter((t) => t.assigneeId === agent.id).map((t) => ({
+                    id: t.id,
+                    title: t.title,
+                    status: t.status,
+                    priority: t.priority,
+                  })),
+                  recentActivities: activities
+                    .filter((a) => a.agentId === agent.id)
+                    .slice(0, 5)
+                    .map((a) => ({ id: a.id, message: a.message, timestamp: a.timestamp, tokens: a.tokens })),
                 }}
               />
             ))}

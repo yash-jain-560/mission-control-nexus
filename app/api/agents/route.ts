@@ -43,7 +43,7 @@ export async function POST(request: NextRequest) {
   }
 }
 
-// GET /api/agents - List all agents
+// GET /api/agents - List all agents with detailed stats
 export async function GET(request: NextRequest) {
   try {
     const searchParams = request.nextUrl.searchParams;
@@ -51,6 +51,7 @@ export async function GET(request: NextRequest) {
     const type = searchParams.get('type');
     const page = parseInt(searchParams.get('page') || '1');
     const limit = parseInt(searchParams.get('limit') || '20');
+    const detailed = searchParams.get('detailed') === 'true';
     
     const skip = (page - 1) * limit;
     
@@ -67,25 +68,97 @@ export async function GET(request: NextRequest) {
         include: {
           heartbeats: {
             orderBy: { timestamp: 'desc' },
-            take: 1,
+            take: 5,
+          },
+          history: {
+            orderBy: { timestamp: 'desc' },
+            take: 10,
           },
         },
       }),
       prisma.agent.count({ where }),
     ]);
     
-    // Enrich agents with online status
-    const enrichedAgents = agents.map(agent => {
-      const timeSinceHeartbeat = Date.now() - agent.lastHeartbeat.getTime();
-      const thirtySecondsMs = 30000;
-      const isOnline = timeSinceHeartbeat <= thirtySecondsMs;
-      
-      return {
-        ...agent,
-        isOnline,
-        lastHeartbeatAgo: `${Math.floor(timeSinceHeartbeat / 1000)}s`,
-      };
-    });
+    // Enrich agents with detailed stats and activities if requested
+    const enrichedAgents = await Promise.all(
+      agents.map(async (agent) => {
+        const timeSinceHeartbeat = Date.now() - agent.lastHeartbeat.getTime();
+        const thirtySecondsMs = 30000;
+        const isOnline = timeSinceHeartbeat <= thirtySecondsMs;
+        
+        // Get token stats
+        const recentActivities = detailed ? await prisma.activity.findMany({
+          where: { agentId: agent.id },
+          orderBy: { timestamp: 'desc' },
+          take: 20,
+          select: {
+            id: true,
+            activityType: true,
+            description: true,
+            inputTokens: true,
+            outputTokens: true,
+            timestamp: true,
+            toolName: true,
+            duration: true,
+          },
+        }) : [];
+        
+        const totalTokens = recentActivities.reduce(
+          (acc, a) => acc + (a.inputTokens + a.outputTokens),
+          0
+        );
+        
+        // Get assigned tickets
+        const assignedTickets = detailed ? await prisma.ticket.findMany({
+          where: { assigneeId: agent.id },
+          select: {
+            id: true,
+            title: true,
+            status: true,
+            priority: true,
+            dueDate: true,
+          },
+        }) : [];
+        
+        return {
+          id: agent.id,
+          name: agent.name,
+          type: agent.type,
+          status: agent.status,
+          tokensAvailable: agent.tokensAvailable,
+          tokensUsed: agent.tokensUsed,
+          isOnline,
+          lastHeartbeat: agent.lastHeartbeat.toISOString(),
+          lastHeartbeatAgo: `${Math.floor(timeSinceHeartbeat / 1000)}s`,
+          metadata: agent.metadata,
+          recentActivities: recentActivities.map(a => ({
+            id: a.id,
+            type: a.activityType,
+            description: a.description,
+            tokens: a.inputTokens + a.outputTokens,
+            timestamp: a.timestamp.toISOString(),
+            tool: a.toolName,
+          })),
+          tokenStats: {
+            recent: totalTokens,
+            total: agent.tokensUsed,
+          },
+          assignedTickets,
+          statusHistory: agent.history.map(h => ({
+            id: h.id,
+            timestamp: h.timestamp.toISOString(),
+            changeType: h.changeType,
+            previousStatus: (h.fromValue as any)?.status,
+            newStatus: (h.toValue as any)?.status,
+          })),
+        };
+      })
+    );
+    
+    // Calculate totals
+    const totalTokensUsed = enrichedAgents.reduce((acc, a) => acc + a.tokensUsed, 0);
+    const onlineCount = enrichedAgents.filter(a => a.isOnline).length;
+    const offlineCount = enrichedAgents.filter(a => !a.isOnline).length;
     
     return NextResponse.json({
       agents: enrichedAgents,
@@ -97,8 +170,10 @@ export async function GET(request: NextRequest) {
       },
       summary: {
         total,
-        online: enrichedAgents.filter(a => a.isOnline).length,
-        offline: enrichedAgents.filter(a => !a.isOnline).length,
+        online: onlineCount,
+        offline: offlineCount,
+        totalTokensUsed,
+        averageTokensPerAgent: Math.floor(totalTokensUsed / (enrichedAgents.length || 1)),
       },
     });
   } catch (error) {

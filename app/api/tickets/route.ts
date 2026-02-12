@@ -34,7 +34,7 @@ export async function POST(request: NextRequest) {
   }
 }
 
-// GET /api/tickets - List tickets with filtering
+// GET /api/tickets - List tickets with filtering and aggregations
 export async function GET(request: NextRequest) {
   try {
     const searchParams = request.nextUrl.searchParams;
@@ -43,6 +43,7 @@ export async function GET(request: NextRequest) {
     const assigneeId = searchParams.get('assigneeId');
     const page = parseInt(searchParams.get('page') || '1');
     const limit = parseInt(searchParams.get('limit') || '20');
+    const summary = searchParams.get('summary') === 'true';
     
     const skip = (page - 1) * limit;
     
@@ -61,6 +62,28 @@ export async function GET(request: NextRequest) {
       prisma.ticket.count({ where }),
     ]);
     
+    let summaryData = null;
+    if (summary) {
+      const allTickets = await prisma.ticket.findMany();
+      summaryData = {
+        byStatus: {
+          Backlog: allTickets.filter(t => t.status === 'Backlog').length,
+          Assigned: allTickets.filter(t => t.status === 'Assigned').length,
+          InProgress: allTickets.filter(t => t.status === 'InProgress').length,
+          Review: allTickets.filter(t => t.status === 'Review').length,
+          Done: allTickets.filter(t => t.status === 'Done').length,
+        },
+        byPriority: {
+          CRITICAL: allTickets.filter(t => t.priority === 'CRITICAL').length,
+          HIGH: allTickets.filter(t => t.priority === 'HIGH').length,
+          MEDIUM: allTickets.filter(t => t.priority === 'MEDIUM').length,
+          LOW: allTickets.filter(t => t.priority === 'LOW').length,
+        },
+        total: allTickets.length,
+        completed: allTickets.filter(t => t.status === 'Done').length,
+      };
+    }
+    
     return NextResponse.json({
       tickets,
       pagination: {
@@ -69,6 +92,7 @@ export async function GET(request: NextRequest) {
         total,
         totalPages: Math.ceil(total / limit),
       },
+      ...(summary && { summary: summaryData }),
     });
   } catch (error) {
     console.error('Error fetching tickets:', error);

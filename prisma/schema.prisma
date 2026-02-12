@@ -95,8 +95,45 @@ model Ticket {
   tags        String[] @default([])
   metadata    Json     @default("{}")
   
+  // Relations
+  activities  Activity[]
+  
   @@index([status])
   @@index([priority])
   @@index([assigneeId])
   @@index([createdAt])
+}
+
+// Agent Activity Log
+model Activity {
+  id          String   @id @default(cuid())
+  agentId     String
+  activityType String   // agent_turn, tool_call, completion, error, status_change
+  description String
+  
+  // Full activity details
+  inputPrompt String?   // Full user input
+  output      String?   // Full model output / result
+  toolName    String?   // Tool used if applicable
+  toolInput   Json?
+  toolOutput  Json?
+  
+  // Token tracking
+  inputTokens  Int      @default(0)
+  outputTokens Int      @default(0)
+  
+  // Timestamps
+  timestamp   DateTime  @default(now())
+  duration    Int       @default(0) // milliseconds
+  
+  // Metadata
+  metadata    Json      @default("{}")
+  ticketId    String?   // Link to ticket if applicable
+  
+  ticket      Ticket?   @relation(fields: [ticketId], references: [id], onDelete: SetNull)
+  
+  @@index([agentId])
+  @@index([timestamp])
+  @@index([activityType])
+  @@index([ticketId])
 }
