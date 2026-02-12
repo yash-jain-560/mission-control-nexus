@@ -24,8 +24,7 @@ export async function POST(
         tokensAvailable: Math.floor(tokensAvailable),
         lastHeartbeat: new Date(),
         lastActive: new Date(),
-        metadata,
-      },
+      } as any,
       create: {
         id: agentId,
         name: (body.name as string) || agentId,
@@ -35,8 +34,7 @@ export async function POST(
         tokensAvailable: Math.floor(tokensAvailable),
         lastHeartbeat: new Date(),
         lastActive: new Date(),
-        metadata,
-      },
+      } as any,
     });
     
     // Record heartbeat in history

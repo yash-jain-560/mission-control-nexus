@@ -25,7 +25,7 @@ export async function POST(request: NextRequest) {
         status,
         tokensAvailable: Math.floor(tokensAvailable),
         lastHeartbeat: new Date(),
-      },
+      } as any,
       create: {
         id,
         name,
@@ -33,7 +33,7 @@ export async function POST(request: NextRequest) {
         status,
         tokensAvailable: Math.floor(tokensAvailable),
         lastHeartbeat: new Date(),
-      },
+      } as any,
     });
 
     return NextResponse.json(agent, { status: 201 });
