@@ -1,10 +1,12 @@
-import { NextRequest, NextResponse } from 'next/server';
+import { NextResponse } from 'next/server';
 
-// GET /api/health - Simple health check
-export async function GET(request: NextRequest) {
+export async function GET() {
   return NextResponse.json({
+    success: true,
     status: 'ok',
-    timestamp: new Date(),
-    uptime: process.uptime(),
+    timestamp: new Date().toISOString(),
+    database: {
+      url: process.env.DATABASE_URL ? 'configured' : 'NOT_SET',
+    }
   });
 }
