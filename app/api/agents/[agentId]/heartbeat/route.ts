@@ -13,7 +13,7 @@ export async function POST(
     const status = ((body.status as string) || 'active').toLowerCase();
     const tokensUsed = (body.tokensUsed as number) || 0;
     const tokensAvailable = (body.tokensAvailable as number) || 1000000;
-    const metadata = body.metadata as Record<string, unknown> || {};
+    const metadata = (body.metadata as any) || {};
     
     // Update agent
     const agent = await prisma.agent.upsert({

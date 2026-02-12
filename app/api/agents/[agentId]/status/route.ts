@@ -10,7 +10,7 @@ export async function GET(
     const agentId = params.agentId;
     
     const agent = await prisma.agent.findUnique({
-      where: { agentId },
+      where: { id: agentId },
       include: {
         heartbeats: {
           orderBy: { timestamp: 'desc' },
@@ -37,7 +37,6 @@ export async function GET(
     return NextResponse.json({
       agent: {
         id: agent.id,
-        agentId: agent.agentId,
         name: agent.name,
         type: agent.type,
         status: agent.status,

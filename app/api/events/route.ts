@@ -14,7 +14,6 @@ async function getSnapshot() {
       take: 50,
       select: {
         id: true,
-        agentId: true,
         name: true,
         type: true,
         status: true,

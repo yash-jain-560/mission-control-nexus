@@ -137,7 +137,7 @@ export class OpenClawIntegration {
    */
   stopHeartbeat(): void {
     if (this.heartbeatInterval) {
-      clearInterval(this.heartbeatInterval);
+      clearInterval(this.heartbeatInterval as any);
       this.heartbeatInterval = null;
     }
     this.sendHeartbeat("offline", "session-ended").catch(console.error);
