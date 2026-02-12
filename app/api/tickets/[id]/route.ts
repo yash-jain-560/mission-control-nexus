@@ -6,15 +6,7 @@ const VALID_STATUSES = ['Backlog', 'Assigned', 'InProgress', 'Review', 'Done'];
 
 // Auto-transition logic - determine next valid states from current state
 function getValidNextStates(currentStatus: string): string[] {
-  const transitions: Record<string, string[]> = {
-    'Backlog': ['Assigned', 'InProgress'],
-    'Assigned': ['InProgress', 'Backlog'],
-    'InProgress': ['Review', 'Assigned'],
-    'Review': ['Done', 'InProgress'],
-    'Done': ['Review'],
-  };
-  
-  return transitions[currentStatus] || [];
+  return VALID_STATUSES.filter((status) => status !== currentStatus);
 }
 
 // PUT /api/tickets/:id - Update ticket status
@@ -106,5 +98,22 @@ export async function GET(
   } catch (error) {
     console.error('Error fetching ticket:', error);
     return NextResponse.json({ error: 'Failed to fetch ticket' }, { status: 500 });
+  }
+}
+
+// DELETE /api/tickets/:id - Delete ticket
+export async function DELETE(
+  request: NextRequest,
+  { params }: { params: { id: string } }
+) {
+  try {
+    const ticketId = params.id;
+
+    await prisma.ticket.delete({ where: { id: ticketId } });
+
+    return NextResponse.json({ success: true, id: ticketId });
+  } catch (error) {
+    console.error('Error deleting ticket:', error);
+    return NextResponse.json({ error: 'Failed to delete ticket' }, { status: 500 });
   }
 }

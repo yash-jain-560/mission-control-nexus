@@ -3,6 +3,42 @@ import { prisma } from '@/lib/prisma';
 
 export const dynamic = 'force-dynamic';
 
+// POST /api/agents - Register a new agent
+export async function POST(request: NextRequest) {
+  try {
+    const body = await request.json();
+    const { id, name, type = 'main', status = 'active', tokensAvailable = 1000000 } = body;
+
+    if (!id || !name) {
+      return NextResponse.json({ error: 'Missing required fields: id, name' }, { status: 400 });
+    }
+
+    const agent = await prisma.agent.upsert({
+      where: { id },
+      update: {
+        name,
+        type,
+        status,
+        tokensAvailable,
+        lastHeartbeat: new Date(),
+      },
+      create: {
+        id,
+        name,
+        type,
+        status,
+        tokensAvailable,
+        lastHeartbeat: new Date(),
+      },
+    });
+
+    return NextResponse.json(agent, { status: 201 });
+  } catch (error) {
+    console.error('Error registering agent:', error);
+    return NextResponse.json({ error: 'Failed to register agent' }, { status: 500 });
+  }
+}
+
 // GET /api/agents - List all agents
 export async function GET(request: NextRequest) {
   try {
