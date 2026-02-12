@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { prisma } from '@/core/db/client';
 import { promises as fs } from 'fs';
 import path from 'path';
 
@@ -22,10 +23,10 @@ interface WorkspaceInfo {
   id: string;
   name: string;
   path: string;
-  files: KnowledgeFile[];
+  files: KnowledgeFileData[];
 }
 
-interface KnowledgeFile {
+interface KnowledgeFileData {
   name: string;
   workspaceId: string;
   workspaceName: string;
@@ -33,6 +34,7 @@ interface KnowledgeFile {
   content: string;
   lastModified: string;
   size: number;
+  isSystemFile: boolean;
 }
 
 // GET /api/knowledge - List all knowledge files across workspaces
@@ -41,46 +43,92 @@ export async function GET(request: NextRequest) {
     const searchParams = request.nextUrl.searchParams;
     const file = searchParams.get('file');
     const workspace = searchParams.get('workspace');
-    const format = searchParams.get('format') || 'tree'; // 'tree' or 'flat'
+    const format = searchParams.get('format') || 'tree';
+    const sync = searchParams.get('sync') === 'true';
+
+    // If sync requested and running locally, sync filesystem to database
+    if (sync) {
+      await syncFilesystemToDatabase();
+    }
 
     // If file is specified, return that file's content
     if (file) {
       return getFileContent(file, workspace || undefined);
     }
 
-    // Scan for all workspaces
-    const workspaces = await scanWorkspaces();
-    
-    // If workspace specified, filter to just that one
-    const targetWorkspaces = workspace 
-      ? workspaces.filter(w => w.id === workspace)
-      : workspaces;
+    // Get files from database
+    const dbFiles = await prisma.knowledgeFile.findMany({
+      where: workspace ? { workspaceId: workspace } : undefined,
+      orderBy: [{ workspaceId: 'asc' }, { name: 'asc' }],
+    });
 
-    // Flatten files for 'flat' format
-    if (format === 'flat') {
-      const allFiles = targetWorkspaces.flatMap(w => w.files);
-      allFiles.sort((a, b) => a.name.localeCompare(b.name));
-      
-      return NextResponse.json({
-        files: allFiles,
-        workspaces: targetWorkspaces.map(w => ({ id: w.id, name: w.name })),
-        totalSize: allFiles.reduce((acc, f) => acc + f.size, 0),
-        totalFiles: allFiles.length,
-        lastUpdated: new Date().toISOString(),
-      });
+    // If no files in database and running locally, try to sync
+    if (dbFiles.length === 0) {
+      const synced = await syncFilesystemToDatabase();
+      if (synced > 0) {
+        // Re-fetch after sync
+        const refreshedFiles = await prisma.knowledgeFile.findMany({
+          where: workspace ? { workspaceId: workspace } : undefined,
+          orderBy: [{ workspaceId: 'asc' }, { name: 'asc' }],
+        });
+        return formatResponse(refreshedFiles, format);
+      }
     }
 
-    // Tree format (default)
-    return NextResponse.json({
-      workspaces: targetWorkspaces,
-      totalFiles: targetWorkspaces.reduce((acc, w) => acc + w.files.length, 0),
-      totalSize: targetWorkspaces.reduce((acc, w) => acc + w.files.reduce((facc, f) => facc + f.size, 0), 0),
-      lastUpdated: new Date().toISOString(),
-    });
+    return formatResponse(dbFiles, format);
   } catch (error) {
     console.error('Error fetching knowledge files:', error);
     return NextResponse.json({ error: 'Failed to fetch knowledge files' }, { status: 500 });
   }
+}
+
+// Format response based on requested format
+function formatResponse(dbFiles: any[], format: string) {
+  const files: KnowledgeFileData[] = dbFiles.map(f => ({
+    name: f.name,
+    workspaceId: f.workspaceId,
+    workspaceName: f.workspaceName,
+    path: f.path,
+    content: f.content,
+    lastModified: f.lastModified.toISOString(),
+    size: f.size,
+    isSystemFile: f.isSystemFile,
+  }));
+
+  if (format === 'flat') {
+    return NextResponse.json({
+      files,
+      workspaces: [...new Set(files.map(f => ({ id: f.workspaceId, name: f.workspaceName })))],
+      totalSize: files.reduce((acc, f) => acc + f.size, 0),
+      totalFiles: files.length,
+      lastUpdated: new Date().toISOString(),
+    });
+  }
+
+  // Group by workspace for tree format
+  const workspaces: WorkspaceInfo[] = [];
+  const workspaceMap = new Map<string, WorkspaceInfo>();
+
+  for (const file of files) {
+    if (!workspaceMap.has(file.workspaceId)) {
+      const workspace: WorkspaceInfo = {
+        id: file.workspaceId,
+        name: file.workspaceName,
+        path: file.workspaceId === 'root' ? WORKSPACE_PATH : path.join(WORKSPACE_PATH, file.workspaceId),
+        files: [],
+      };
+      workspaceMap.set(file.workspaceId, workspace);
+      workspaces.push(workspace);
+    }
+    workspaceMap.get(file.workspaceId)!.files.push(file);
+  }
+
+  return NextResponse.json({
+    workspaces,
+    totalFiles: files.length,
+    totalSize: files.reduce((acc, f) => acc + f.size, 0),
+    lastUpdated: new Date().toISOString(),
+  });
 }
 
 // PUT /api/knowledge - Update a knowledge file
@@ -98,45 +146,55 @@ export async function PUT(request: NextRequest) {
       return NextResponse.json({ error: 'Invalid filename' }, { status: 400 });
     }
 
-    // Determine the file path
-    let filePath: string;
-    if (workspace) {
-      const workspacePath = path.join(WORKSPACE_PATH, workspace);
-      // Verify workspace exists and is a directory
-      try {
-        const stats = await fs.stat(workspacePath);
-        if (!stats.isDirectory()) {
-          return NextResponse.json({ error: 'Invalid workspace' }, { status: 400 });
-        }
-      } catch {
-        return NextResponse.json({ error: 'Workspace not found' }, { status: 404 });
-      }
-      filePath = path.join(workspacePath, file);
-    } else {
-      filePath = path.join(WORKSPACE_PATH, file);
+    const workspaceId = workspace || 'root';
+    const filePath = workspaceId === 'root' 
+      ? path.join(WORKSPACE_PATH, file)
+      : path.join(WORKSPACE_PATH, workspaceId, file);
+
+    // Update or create in database
+    const size = Buffer.byteLength(content, 'utf-8');
+    const isSystemFile = KNOWLEDGE_FILES.includes(file);
+
+    const dbFile = await prisma.knowledgeFile.upsert({
+      where: {
+        workspaceId_name: {
+          workspaceId,
+          name: file,
+        },
+      },
+      update: {
+        content,
+        size,
+        lastModified: new Date(),
+      },
+      create: {
+        name: file,
+        workspaceId,
+        workspaceName: formatWorkspaceName(workspaceId),
+        path: filePath,
+        content,
+        size,
+        isSystemFile,
+      },
+    });
+
+    // Also update filesystem if running locally
+    try {
+      await fs.mkdir(path.dirname(filePath), { recursive: true });
+      await fs.writeFile(filePath, content, 'utf-8');
+    } catch (fsError) {
+      // Filesystem update failed, but database is updated - that's ok for Vercel
+      console.log('Filesystem update skipped (likely Vercel environment)');
     }
-
-    // Ensure the path is still within workspace
-    const resolvedPath = path.resolve(filePath);
-    const resolvedWorkspace = path.resolve(WORKSPACE_PATH);
-    if (!resolvedPath.startsWith(resolvedWorkspace)) {
-      return NextResponse.json({ error: 'Invalid path' }, { status: 400 });
-    }
-
-    // Write the file
-    await fs.writeFile(filePath, content, 'utf-8');
-
-    // Get updated stats
-    const stats = await fs.stat(filePath);
 
     return NextResponse.json({
-      name: file,
-      workspaceId: workspace || 'root',
-      workspaceName: workspace || 'Root Workspace',
-      path: filePath,
-      content,
-      lastModified: stats.mtime.toISOString(),
-      size: stats.size,
+      name: dbFile.name,
+      workspaceId: dbFile.workspaceId,
+      workspaceName: dbFile.workspaceName,
+      path: dbFile.path,
+      content: dbFile.content,
+      lastModified: dbFile.lastModified.toISOString(),
+      size: dbFile.size,
       message: 'File updated successfully',
     });
   } catch (error) {
@@ -160,38 +218,58 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Invalid filename' }, { status: 400 });
     }
 
-    // Determine the file path
-    let filePath: string;
-    if (workspace) {
-      const workspacePath = path.join(WORKSPACE_PATH, workspace);
-      filePath = path.join(workspacePath, file);
-    } else {
-      filePath = path.join(WORKSPACE_PATH, file);
-    }
+    const workspaceId = workspace || 'root';
+    const filePath = workspaceId === 'root'
+      ? path.join(WORKSPACE_PATH, file)
+      : path.join(WORKSPACE_PATH, workspaceId, file);
 
-    // Check if file already exists
-    try {
-      await fs.access(filePath);
+    // Check if file already exists in database
+    const existing = await prisma.knowledgeFile.findUnique({
+      where: {
+        workspaceId_name: {
+          workspaceId,
+          name: file,
+        },
+      },
+    });
+
+    if (existing) {
       return NextResponse.json({ error: 'File already exists' }, { status: 409 });
-    } catch {
-      // File doesn't exist, good to proceed
     }
 
-    // Ensure directory exists
-    const dir = path.dirname(filePath);
-    await fs.mkdir(dir, { recursive: true });
+    const size = Buffer.byteLength(content, 'utf-8');
+    const isSystemFile = KNOWLEDGE_FILES.includes(file);
 
-    // Write the file
-    await fs.writeFile(filePath, content, 'utf-8');
+    // Create in database
+    const dbFile = await prisma.knowledgeFile.create({
+      data: {
+        name: file,
+        workspaceId,
+        workspaceName: formatWorkspaceName(workspaceId),
+        path: filePath,
+        content,
+        size,
+        isSystemFile,
+      },
+    });
+
+    // Also create on filesystem if running locally
+    try {
+      await fs.mkdir(path.dirname(filePath), { recursive: true });
+      await fs.writeFile(filePath, content, 'utf-8');
+    } catch (fsError) {
+      // Filesystem update skipped for Vercel
+      console.log('Filesystem create skipped (likely Vercel environment)');
+    }
 
     return NextResponse.json({
-      name: file,
-      workspaceId: workspace || 'root',
-      workspaceName: workspace || 'Root Workspace',
-      path: filePath,
-      content,
-      lastModified: new Date().toISOString(),
-      size: Buffer.byteLength(content, 'utf-8'),
+      name: dbFile.name,
+      workspaceId: dbFile.workspaceId,
+      workspaceName: dbFile.workspaceName,
+      path: dbFile.path,
+      content: dbFile.content,
+      lastModified: dbFile.lastModified.toISOString(),
+      size: dbFile.size,
       message: 'File created successfully',
     }, { status: 201 });
   } catch (error) {
@@ -216,134 +294,38 @@ export async function DELETE(request: NextRequest) {
       return NextResponse.json({ error: 'Invalid filename' }, { status: 400 });
     }
 
-    // Determine the file path
-    let filePath: string;
-    if (workspace) {
-      const workspacePath = path.join(WORKSPACE_PATH, workspace);
-      filePath = path.join(workspacePath, file);
-    } else {
-      filePath = path.join(WORKSPACE_PATH, file);
-    }
+    const workspaceId = workspace || 'root';
+    const filePath = workspaceId === 'root'
+      ? path.join(WORKSPACE_PATH, file)
+      : path.join(WORKSPACE_PATH, workspaceId, file);
 
-    // Check if file exists
+    // Delete from database
+    await prisma.knowledgeFile.delete({
+      where: {
+        workspaceId_name: {
+          workspaceId,
+          name: file,
+        },
+      },
+    });
+
+    // Also delete from filesystem if running locally
     try {
-      await fs.access(filePath);
-    } catch {
-      return NextResponse.json({ error: 'File not found' }, { status: 404 });
+      await fs.unlink(filePath);
+    } catch (fsError) {
+      // Filesystem delete skipped for Vercel
+      console.log('Filesystem delete skipped (likely Vercel environment)');
     }
-
-    // Delete the file
-    await fs.unlink(filePath);
 
     return NextResponse.json({
       message: 'File deleted successfully',
       name: file,
-      workspaceId: workspace || 'root',
+      workspaceId,
     });
   } catch (error) {
     console.error('Error deleting knowledge file:', error);
     return NextResponse.json({ error: 'Failed to delete file' }, { status: 500 });
   }
-}
-
-// Scan for all workspaces and their knowledge files
-async function scanWorkspaces(): Promise<WorkspaceInfo[]> {
-  const workspaces: WorkspaceInfo[] = [];
-
-  // Always include root workspace
-  const rootFiles = await scanDirectory(WORKSPACE_PATH, 'root', 'Root Workspace');
-  workspaces.push({
-    id: 'root',
-    name: 'Root Workspace',
-    path: WORKSPACE_PATH,
-    files: rootFiles,
-  });
-
-  // Scan for agent directories (subdirectories with .md files)
-  try {
-    const entries = await fs.readdir(WORKSPACE_PATH, { withFileTypes: true });
-    
-    for (const entry of entries) {
-      if (entry.isDirectory()) {
-        const dirPath = path.join(WORKSPACE_PATH, entry.name);
-        const dirFiles = await scanDirectory(dirPath, entry.name, entry.name);
-        
-        if (dirFiles.length > 0) {
-          workspaces.push({
-            id: entry.name,
-            name: formatWorkspaceName(entry.name),
-            path: dirPath,
-            files: dirFiles,
-          });
-        }
-      }
-    }
-  } catch (error) {
-    console.error('Error scanning workspaces:', error);
-  }
-
-  return workspaces;
-}
-
-// Scan a directory for knowledge files
-async function scanDirectory(dirPath: string, workspaceId: string, workspaceName: string): Promise<KnowledgeFile[]> {
-  const files: KnowledgeFile[] = [];
-
-  // First check for known knowledge files
-  for (const filename of KNOWLEDGE_FILES) {
-    const filePath = path.join(dirPath, filename);
-    try {
-      const stats = await fs.stat(filePath);
-      if (stats.isFile()) {
-        const content = await fs.readFile(filePath, 'utf-8');
-        files.push({
-          name: filename,
-          workspaceId,
-          workspaceName,
-          path: filePath,
-          content,
-          lastModified: stats.mtime.toISOString(),
-          size: stats.size,
-        });
-      }
-    } catch {
-      // File doesn't exist, skip
-    }
-  }
-
-  // Also check for any other .md files in the directory
-  try {
-    const entries = await fs.readdir(dirPath, { withFileTypes: true });
-    const mdFiles = entries
-      .filter(entry => entry.isFile() && entry.name.endsWith('.md') && !KNOWLEDGE_FILES.includes(entry.name))
-      .map(entry => entry.name);
-
-    for (const filename of mdFiles) {
-      const filePath = path.join(dirPath, filename);
-      try {
-        const stats = await fs.stat(filePath);
-        const content = await fs.readFile(filePath, 'utf-8');
-        files.push({
-          name: filename,
-          workspaceId,
-          workspaceName,
-          path: filePath,
-          content,
-          lastModified: stats.mtime.toISOString(),
-          size: stats.size,
-        });
-      } catch {
-        // Skip
-      }
-    }
-  } catch {
-    // Error reading directory
-  }
-
-  // Sort by name
-  files.sort((a, b) => a.name.localeCompare(b.name));
-
-  return files;
 }
 
 // GET helper for single file
@@ -354,41 +336,149 @@ async function getFileContent(filename: string, workspace?: string) {
       return NextResponse.json({ error: 'Invalid filename' }, { status: 400 });
     }
 
-    const filePath = workspace 
-      ? path.join(WORKSPACE_PATH, workspace, filename)
-      : path.join(WORKSPACE_PATH, filename);
-    
-    // Ensure the path is still within workspace
-    const resolvedPath = path.resolve(filePath);
-    const resolvedWorkspace = path.resolve(WORKSPACE_PATH);
-    if (!resolvedPath.startsWith(resolvedWorkspace)) {
-      return NextResponse.json({ error: 'Invalid path' }, { status: 400 });
-    }
+    const workspaceId = workspace || 'root';
 
-    const stats = await fs.stat(filePath);
-    if (!stats.isFile()) {
-      return NextResponse.json({ error: 'Not a file' }, { status: 400 });
-    }
-
-    const content = await fs.readFile(filePath, 'utf-8');
-
-    return NextResponse.json({
-      name: filename,
-      workspaceId: workspace || 'root',
-      workspaceName: workspace || 'Root Workspace',
-      path: filePath,
-      content,
-      lastModified: stats.mtime.toISOString(),
-      size: stats.size,
+    // Try to get from database first
+    const dbFile = await prisma.knowledgeFile.findUnique({
+      where: {
+        workspaceId_name: {
+          workspaceId,
+          name: filename,
+        },
+      },
     });
+
+    if (dbFile) {
+      return NextResponse.json({
+        name: dbFile.name,
+        workspaceId: dbFile.workspaceId,
+        workspaceName: dbFile.workspaceName,
+        path: dbFile.path,
+        content: dbFile.content,
+        lastModified: dbFile.lastModified.toISOString(),
+        size: dbFile.size,
+      });
+    }
+
+    // If not in database, try filesystem (local dev only)
+    const filePath = workspaceId === 'root'
+      ? path.join(WORKSPACE_PATH, filename)
+      : path.join(WORKSPACE_PATH, workspaceId, filename);
+
+    try {
+      const stats = await fs.stat(filePath);
+      if (!stats.isFile()) {
+        return NextResponse.json({ error: 'Not a file' }, { status: 400 });
+      }
+
+      const content = await fs.readFile(filePath, 'utf-8');
+
+      // Save to database for future requests
+      await prisma.knowledgeFile.create({
+        data: {
+          name: filename,
+          workspaceId,
+          workspaceName: formatWorkspaceName(workspaceId),
+          path: filePath,
+          content,
+          size: stats.size,
+          isSystemFile: KNOWLEDGE_FILES.includes(filename),
+          lastModified: stats.mtime,
+        },
+      });
+
+      return NextResponse.json({
+        name: filename,
+        workspaceId,
+        workspaceName: formatWorkspaceName(workspaceId),
+        path: filePath,
+        content,
+        lastModified: stats.mtime.toISOString(),
+        size: stats.size,
+      });
+    } catch (fsError) {
+      return NextResponse.json({ error: 'File not found' }, { status: 404 });
+    }
   } catch (error) {
     console.error('Error reading file:', error);
     return NextResponse.json({ error: 'File not found' }, { status: 404 });
   }
 }
 
+// Sync filesystem files to database (for local development)
+async function syncFilesystemToDatabase(): Promise<number> {
+  try {
+    // Check if workspace path exists
+    try {
+      await fs.access(WORKSPACE_PATH);
+    } catch {
+      console.log('Workspace path not accessible (Vercel environment), skipping filesystem sync');
+      return 0;
+    }
+
+    let syncedCount = 0;
+    const workspaces = ['root', 'personal', 'business', 'memory', 'skills'];
+
+    for (const workspaceId of workspaces) {
+      const dirPath = workspaceId === 'root' ? WORKSPACE_PATH : path.join(WORKSPACE_PATH, workspaceId);
+      
+      try {
+        const entries = await fs.readdir(dirPath, { withFileTypes: true });
+        const mdFiles = entries
+          .filter(entry => entry.isFile() && entry.name.endsWith('.md'))
+          .map(entry => entry.name);
+
+        for (const filename of mdFiles) {
+          const filePath = path.join(dirPath, filename);
+          try {
+            const stats = await fs.stat(filePath);
+            const content = await fs.readFile(filePath, 'utf-8');
+            const isSystemFile = KNOWLEDGE_FILES.includes(filename);
+
+            await prisma.knowledgeFile.upsert({
+              where: {
+                workspaceId_name: {
+                  workspaceId,
+                  name: filename,
+                },
+              },
+              update: {
+                content,
+                size: stats.size,
+                lastModified: stats.mtime,
+              },
+              create: {
+                name: filename,
+                workspaceId,
+                workspaceName: formatWorkspaceName(workspaceId),
+                path: filePath,
+                content,
+                size: stats.size,
+                isSystemFile,
+                lastModified: stats.mtime,
+              },
+            });
+            syncedCount++;
+          } catch (fileError) {
+            console.error(`Error syncing file ${filename}:`, fileError);
+          }
+        }
+      } catch (dirError) {
+        // Directory doesn't exist, skip
+      }
+    }
+
+    console.log(`Synced ${syncedCount} files to database`);
+    return syncedCount;
+  } catch (error) {
+    console.error('Error syncing filesystem to database:', error);
+    return 0;
+  }
+}
+
 // Format workspace name for display
 function formatWorkspaceName(name: string): string {
+  if (name === 'root') return 'Root Workspace';
   // Convert kebab-case or snake_case to Title Case
   return name
     .replace(/[-_]/g, ' ')

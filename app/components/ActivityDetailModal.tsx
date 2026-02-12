@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { formatRelativeTime } from '@/lib/utils';
 import { formatCost } from '@/lib/cost-calculator';
 
@@ -60,6 +60,25 @@ export function ActivityDetailModal({ activityId, onClose }: ActivityDetailModal
   const [error, setError] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<'overview' | 'request' | 'response' | 'chain' | 'json'>('overview');
   const [linkedActivities, setLinkedActivities] = useState<ActivityDetail[]>([]);
+
+  // Handle ESC key
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        onClose();
+      }
+    };
+
+    document.addEventListener('keydown', handleKeyDown);
+    // Prevent body scroll
+    document.body.style.overflow = 'hidden';
+    
+    return () => {
+      document.removeEventListener('keydown', handleKeyDown);
+      document.body.style.overflow = '';
+    };
+  }, [onClose]);
 
   useEffect(() => {
     fetchActivityDetails();
@@ -157,9 +176,19 @@ export function ActivityDetailModal({ activityId, onClose }: ActivityDetailModal
     navigator.clipboard.writeText(text);
   };
 
+  // Handle backdrop click
+  const handleBackdropClick = useCallback((e: React.MouseEvent) => {
+    if (e.target === e.currentTarget) {
+      onClose();
+    }
+  }, [onClose]);
+
   if (loading) {
     return (
-      <div className="fixed inset-0 z-50 bg-black/70 p-4 flex items-center justify-center">
+      <div 
+        className="fixed inset-0 z-50 bg-black/70 p-4 flex items-center justify-center"
+        onClick={handleBackdropClick}
+      >
         <div className="bg-slate-900 border border-slate-800 rounded-lg max-w-4xl w-full max-h-[80vh] p-8">
           <div className="flex items-center justify-center">
             <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-500"></div>
@@ -171,7 +200,10 @@ export function ActivityDetailModal({ activityId, onClose }: ActivityDetailModal
 
   if (error || !activity) {
     return (
-      <div className="fixed inset-0 z-50 bg-black/70 p-4 flex items-center justify-center">
+      <div 
+        className="fixed inset-0 z-50 bg-black/70 p-4 flex items-center justify-center"
+        onClick={handleBackdropClick}
+      >
         <div className="bg-slate-900 border border-slate-800 rounded-lg max-w-4xl w-full max-h-[80vh]">
           <div className="p-6 text-center">
             <p className="text-red-400">{error || 'Activity not found'}</p>
@@ -192,10 +224,10 @@ export function ActivityDetailModal({ activityId, onClose }: ActivityDetailModal
   return (
     <div
       className="fixed inset-0 z-50 bg-black/70 p-4 flex items-center justify-center"
-      onClick={onClose}
+      onClick={handleBackdropClick}
     >
       <div
-        className="bg-slate-900 border border-slate-800 rounded-lg max-w-4xl w-full max-h-[85vh] overflow-hidden flex flex-col"
+        className="bg-slate-900 border border-slate-800 rounded-lg max-w-4xl w-full max-h-[85vh] overflow-hidden flex flex-col shadow-2xl"
         onClick={(e) => e.stopPropagation()}
       >
         {/* Header */}
@@ -208,8 +240,9 @@ export function ActivityDetailModal({ activityId, onClose }: ActivityDetailModal
             </div>
           </div>
           <button
-            className="text-slate-400 hover:text-white text-2xl px-2"
+            className="text-slate-400 hover:text-white text-2xl px-2 transition-colors"
             onClick={onClose}
+            aria-label="Close modal"
           >
             ×
           </button>
@@ -269,7 +302,7 @@ export function ActivityDetailModal({ activityId, onClose }: ActivityDetailModal
               {(activity.apiEndpoint || activity.apiMethod) && (
                 <div className="bg-slate-800/50 rounded-lg p-4">
                   <p className="text-xs text-slate-500 mb-2">API Call</p>
-                  <div className="flex items-center gap-3">
+                  <div className="flex items-center gap-3 flex-wrap">
                     {activity.apiMethod && (
                       <span className="px-2 py-1 bg-blue-500/20 text-blue-400 rounded text-xs font-mono">
                         {activity.apiMethod}
@@ -547,7 +580,7 @@ export function ActivityDetailModal({ activityId, onClose }: ActivityDetailModal
                   <div className="relative pl-4 border-l-2 border-slate-700 space-y-4">
                     {[...linkedActivities, activity]
                       .sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime())
-                      .map((item, index, arr) => (
+                      .map((item, index) => (
                         <div key={item.id} className="relative">
                           <span className={`absolute -left-[21px] top-1 h-3 w-3 rounded-full border-2 border-slate-900 ${
                             item.id === activity.id ? 'bg-blue-500' : 'bg-slate-600'
@@ -588,7 +621,7 @@ export function ActivityDetailModal({ activityId, onClose }: ActivityDetailModal
         <div className="px-6 py-3 border-t border-slate-800 bg-slate-900/50 flex justify-end">
           <button
             onClick={onClose}
-            className="px-4 py-2 bg-slate-700 hover:bg-slate-600 rounded text-white text-sm"
+            className="px-4 py-2 bg-slate-700 hover:bg-slate-600 rounded text-white text-sm transition-colors"
           >
             Close
           </button>
