@@ -18,6 +18,7 @@ type TaskType =
   | 'planning';
 
 type ModelChoice = 
+  | 'ollama/llama3.2:3b'
   | 'gemini-2.0-flash'
   | 'gemini-2.0-pro'
   | 'claude-haiku-4-5'
@@ -29,27 +30,30 @@ interface RoutingDecision {
   estimatedTokens: number;
   estimatedCost: number;
   fallback?: ModelChoice;
+  isLocal: boolean;
 }
 
 class ModelRouter {
   private routingRules: Map<TaskType, ModelChoice> = new Map([
-    ['orchestration', 'gemini-2.0-flash'],
-    ['implementation', 'claude-haiku-4-5'],
-    ['testing', 'gemini-2.0-flash'],
-    ['documentation', 'claude-haiku-4-5'],
-    ['design_review', 'claude-sonnet-4-5'],
-    ['debugging', 'claude-sonnet-4-5'],
-    ['planning', 'gemini-2.0-flash'],
+    ['orchestration', 'ollama/llama3.2:3b'],      // Local first
+    ['implementation', 'ollama/llama3.2:3b'],     // Local first
+    ['testing', 'ollama/llama3.2:3b'],            // Local first
+    ['documentation', 'ollama/llama3.2:3b'],      // Local first
+    ['design_review', 'ollama/llama3.2:3b'],      // Local first (try local)
+    ['debugging', 'ollama/llama3.2:3b'],          // Local first (try local)
+    ['planning', 'ollama/llama3.2:3b'],           // Local first
   ]);
 
   private tokenEstimates: Map<ModelChoice, number> = new Map([
-    ['gemini-2.0-flash', 8000],      // Base tokens per task
+    ['ollama/llama3.2:3b', 8000],     // Local - estimate only
+    ['gemini-2.0-flash', 8000],       // Base tokens per task
     ['gemini-2.0-pro', 12000],
     ['claude-haiku-4-5', 20000],
     ['claude-sonnet-4-5', 60000],
   ]);
 
   private costPerMillion: Map<ModelChoice, number> = new Map([
+    ['ollama/llama3.2:3b', 0],        // Zero cost (local compute)
     ['gemini-2.0-flash', 0],          // Free tier
     ['gemini-2.0-pro', 0],            // Free tier (lower quota)
     ['claude-haiku-4-5', 0.80],       // $0.80 per 1M input
@@ -103,6 +107,7 @@ class ModelRouter {
       estimatedTokens: tokens,
       estimatedCost: cost,
       fallback: this.getFallbackModel(model),
+      isLocal: this.isLocal(model),
     };
   }
 
@@ -111,12 +116,20 @@ class ModelRouter {
    */
   private getFallbackModel(model: ModelChoice): ModelChoice {
     const fallbacks: Record<ModelChoice, ModelChoice> = {
+      'ollama/llama3.2:3b': 'gemini-2.0-flash',      // Local → Cloud (free)
       'gemini-2.0-flash': 'claude-haiku-4-5',
       'gemini-2.0-pro': 'gemini-2.0-flash',
       'claude-haiku-4-5': 'gemini-2.0-flash',
       'claude-sonnet-4-5': 'claude-haiku-4-5',
     };
     return fallbacks[model] || 'claude-haiku-4-5';
+  }
+
+  /**
+   * Check if model is local (Ollama)
+   */
+  isLocal(model: ModelChoice): boolean {
+    return model.startsWith('ollama/');
   }
 
   /**
